@@ -1,5 +1,13 @@
-# Build/run on the eval target (Haxe's built-in interpreter).
-# Usage: haxe build.hxml
+# Build and run on the eval target (Haxe's built-in interpreter).
 --class-path src
 --main Main
 --interp
+
+--next
+
+# Build the same source to PHP and run the generated app.
+# Haxe 4's PHP target emits PHP 7.0+ code; there is no PHP 5 target to opt out of.
+--class-path src
+--main Main
+--php bin/php
+--cmd php bin/php/index.php

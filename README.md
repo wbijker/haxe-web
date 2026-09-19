@@ -18,25 +18,31 @@ export HAXE_STD_PATH="/opt/homebrew/lib/haxe/std"
 
 Verify: `haxe --version` (this project was set up with 4.3.7).
 
+PHP is pinned in `.tool-versions` (asdf) and is needed for the second build
+target. Haxe 4's PHP target emits **PHP 7.0+** code — PHP 5 support was dropped
+in Haxe 4, so there is no `-D php7` to opt into any more; `--php` *is* the PHP 7
+target. That output runs unchanged on the 8.x interpreter pinned here.
+
 ## Run
 
 ```sh
 haxe build.hxml
 ```
 
-Expected output:
+This builds twice from the same source:
 
-```
-src/Main.hx:3: Hello, World!
-Hello from the Haxe eval target!
-```
+1. **eval** — Haxe's built-in interpreter. `--interp` compiles and runs in one
+   step, so there is no artifact.
+2. **PHP** — generated into `bin/php/`, then run via `--cmd php bin/php/index.php`.
 
-`--interp` both compiles and runs in one step, so there is no build artifact.
+Both print the same thing.
 
 ## Layout
 
 - `src/Main.hx` — entry point
-- `build.hxml` — compiler args for the eval target
+- `src/model/` — `Delivery` and its enums, ported from C#
+- `src/sql/` — the SQL expression tree and the `where()` macro
+- `build.hxml` — compiler args for both targets
 
 ## `Query.where` — lambda to SQL, at compile time
 
