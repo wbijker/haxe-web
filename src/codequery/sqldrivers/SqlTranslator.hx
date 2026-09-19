@@ -18,6 +18,7 @@ import codequery.sqlexpressions.RowLockMode;
 import codequery.sqlexpressions.RawSqlExpression;
 import codequery.sqlexpressions.ScalarSubquerySqlExpression;
 import codequery.sqlexpressions.SqlCastExpression;
+import codequery.sqlexpressions.SqlCommentExpression;
 import codequery.sqlexpressions.SqlExpressionWalker;
 import codequery.sqlexpressions.SqlParameterExpression;
 import codequery.sqlexpressions.SqlType;
@@ -77,6 +78,12 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 
 	var aliasCounter:Int = 0;
 
+	/**
+		The statements marked as CTEs that the one being rendered reaches, under the names the WITH
+		clause gives them — so a source that is one of them renders as its name.
+	**/
+	var cteNames:haxe.ds.ObjectMap<SelectExpression, String> = new haxe.ds.ObjectMap();
+
 	/** What was sent beside the last statement rendered. */
 	public var Parameters(default, null):Array<SqlConstValue> = [];
 
@@ -91,6 +98,7 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 		parameters = [];
 		aliases = new haxe.ds.ObjectMap();
 		aliasCounter = 0;
+		cteNames = new haxe.ds.ObjectMap();
 		final sql = Render(statement);
 		Parameters = parameters;
 		return sql;
@@ -237,8 +245,87 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 		return returning.length == 0 ? "" : ' RETURNING ${returning.map(RenderExpression).join(", ")}';
 	}
 
+	/**
+		The whole statement: the CTEs it reaches hoisted into a WITH clause in front of it, in
+		dependency order, and its comments around it.
+	**/
 	function ToSelectSql(expression:SelectExpression):String {
-		return Against(expression.AllSources(), () -> Statement(expression));
+		final ctes = CollectCtes(expression);
+		var made = 1;
+		for (cte in ctes) {
+			cteNames.set(cte, cte.CteName != null ? cte.CteName : "cte" + made++);
+		}
+
+		// The definitions first, so their sources take the first aliases, as they read.
+		final named = ctes.map(cte -> '${cteNames.get(cte)} AS (${Against(cte.AllSources(), () -> Statement(cte))})');
+		var sql = Against(expression.AllSources(), () -> Statement(expression));
+		if (ctes.length > 0) {
+			final recursive = ctes.filter(cte -> cte.IsRecursive).length > 0 ? "RECURSIVE " : "";
+			sql = 'WITH $recursive${named.join(", ")} $sql';
+		}
+
+		// A line comment runs to the end of its line, so one of several lines is several comments.
+		final lines = [];
+		if (expression.CommentAbove != null) {
+			for (line in CommentLines(expression.CommentAbove)) {
+				lines.push(line);
+			}
+		}
+		lines.push(sql);
+		if (expression.CommentBelow != null) {
+			for (line in CommentLines(expression.CommentBelow)) {
+				lines.push(line);
+			}
+		}
+		return lines.join("\n");
+	}
+
+	static function CommentLines(text:String):Array<String> {
+		return StringTools.replace(text, "\r\n", "\n").split("\n").map(line -> "-- " + StringTools.rtrim(line));
+	}
+
+	/**
+		The CTE-marked statements the root reaches through its sources, its joins' and its unions',
+		a statement's dependencies before the statement itself. The root is not one of them even
+		when marked: it is the statement being rendered.
+	**/
+	static function CollectCtes(root:SelectExpression):Array<SelectExpression> {
+		final ordered = [];
+		final seen = new haxe.ds.ObjectMap<SelectExpression, Bool>();
+		final onStack = new haxe.ds.ObjectMap<SelectExpression, Bool>();
+
+		function visit(expression:SelectExpression, isRoot:Bool):Void {
+			if (onStack.exists(expression)) {
+				return;
+			}
+			onStack.set(expression, true);
+			for (source in CteSources(expression)) {
+				final query = Std.downcast(cast source, QuerySqlSource);
+				if (query != null) {
+					visit(query.Query, false);
+				}
+			}
+			if (!isRoot && expression.IsCte && !seen.exists(expression)) {
+				seen.set(expression, true);
+				ordered.push(expression);
+			}
+		}
+
+		visit(root, true);
+		return ordered;
+	}
+
+	static function CteSources(expression:SelectExpression):Array<ISqlSource> {
+		final sources:Array<ISqlSource> = [expression.Source];
+		for (join in expression.Joins) {
+			sources.push(join.Source);
+		}
+		for (union in expression.Unions) {
+			for (source in CteSources(union.Query)) {
+				sources.push(source);
+			}
+		}
+		return sources;
 	}
 
 	/** The statement itself, rendered against whichever sources are in scope. */
@@ -268,7 +355,7 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 		} else if (expression.GroupBy.length > 0) {
 			final keys = expression.GroupBy.map(RenderExpression).join(", ");
 			sql += switch expression.Grouping {
-				case None: ' GROUP BY $keys';
+				case None | GroupingSets: ' GROUP BY $keys';
 				case Rollup: ' GROUP BY ROLLUP ($keys)';
 				case Cube: ' GROUP BY CUBE ($keys)';
 			}
@@ -322,6 +409,21 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 
 		final query = Std.downcast(cast source, QuerySqlSource);
 		if (query != null) {
+			// A CTE is read by the name the WITH clause gave it rather than inlined; so is a query
+			// that is nothing but `SELECT * FROM <cte>`, which is what a CTE handed to a join is.
+			final cteName = cteNames.get(query.Query);
+			if (cteName != null) {
+				return '$cteName AS ${Named(query)}';
+			}
+			final wrapped = Std.downcast(cast query.Query.Source, QuerySqlSource);
+			if (query.Query.IsSimpleWrapper() && wrapped != null && cteNames.get(wrapped.Query) != null) {
+				return '${cteNames.get(wrapped.Query)} AS ${Named(query)}';
+			}
+			// A query that is nothing but a table is that table, and reads better joined as one.
+			final inner = Std.downcast(cast query.Query.Source, TableSqlSource);
+			if (query.Query.IsSimpleTableQuery() && inner != null) {
+				return '${inner.Table} AS ${Named(query)}';
+			}
 			return '(${Against(query.Query.AllSources(), () -> Statement(query.Query))}) AS ${Named(query)}';
 		}
 
@@ -360,7 +462,8 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 		}
 		// Only one of the two: a row is either passed over or waited for.
 		final waiting = expression.LockSkipLocked ? " SKIP LOCKED" : (expression.LockNoWait ? " NOWAIT" : "");
-		return ' $mode$waiting';
+		final of = expression.LockTables.length == 0 ? "" : ' OF ${expression.LockTables.map(Named).join(", ")}';
+		return ' $mode$of$waiting';
 	}
 
 	function Distinct(expression:SelectExpression):String {
@@ -501,10 +604,25 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 
 	public function OnProjection(e:ProjectionSqlExpression):String {
 		return e.Members.map(member -> {
+			// A comment on a projected column follows the name: what it is called, then what it means.
+			final commented = Std.downcast(cast member.Expression, SqlCommentExpression);
+			if (commented != null && member.Name != "") {
+				return '${RenderExpression(commented.Value)} AS ${member.Name} ${Comment(commented.Text)}';
+			}
 			final selected = RenderExpression(member.Expression);
 			// A projection of one expression names nothing, so there is nothing to alias it as.
 			return member.Name == "" ? selected : '$selected AS ${member.Name}';
 		}).join(", ");
+	}
+
+	/** A value with its comment beside it, anywhere that is not a projected column. */
+	public function OnComment(e:SqlCommentExpression):String {
+		return '${RenderExpression(e.Value)} ${Comment(e.Text)}';
+	}
+
+	/** The block form, the only one that can sit inside a statement. */
+	static function Comment(text:String):String {
+		return '/* $text */';
 	}
 
 	public function OnExists(e:ExistsSqlExpression):String {

@@ -113,6 +113,13 @@ extern class Sql {
 	/** `x - INTERVAL 'n unit'`. */
 	public static function dateSubtract(value:Date, count:Int, unit:String):Date;
 
+	/**
+		A value with a block comment beside it in the SQL, saying what it means, for whoever reads
+		the statement in a log, where the code that built it is nowhere to be seen. The value is
+		unchanged. C#'s `SqlComment.Create`.
+	**/
+	public static function comment<T>(value:T, text:String):T;
+
 	/** `ABS(x)`. */
 	public static function abs<T:Float>(value:T):T;
 

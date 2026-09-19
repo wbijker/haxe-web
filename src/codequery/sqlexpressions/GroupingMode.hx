@@ -5,4 +5,7 @@ enum GroupingMode {
 	None;
 	Rollup;
 	Cube;
+
+	/** `GROUPING SETS (…)` — the groupings named one by one. */
+	GroupingSets;
 }

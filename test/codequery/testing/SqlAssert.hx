@@ -320,6 +320,12 @@ class SqlAssert {
 		if (c != null) {
 			return c.Cte.Name;
 		}
+		// A source is often wrapped — a joined table arrives as a subquery around the table — so
+		// the table a test means is a step or two below the source it can name, as in the C#.
+		final q = Std.downcast(cast source, QuerySqlSource);
+		if (q != null) {
+			return tableName(q.Query.Source);
+		}
 		return Assert.fail('${Type.getClassName(Type.getClass(source))} has no table name');
 	}
 

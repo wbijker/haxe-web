@@ -14,6 +14,13 @@ extern class IAggregateSet<T1> {
 	/** `COUNT(*)` — how many rows are in the group. */
 	public function count():Aggregate<T1, Int>;
 
+	/**
+		The grouping key, or one member of it — `a.key(r -> r.unitId)` — selected beside the
+		aggregates. C#'s `g.Key`; here the key is named again, since a query's row types are all a
+		macro can read.
+	**/
+	public function key<TValue>(selector:T1->TValue):TValue;
+
 	/** `COUNT(DISTINCT x)`. */
 	public function countDistinct<TValue>(selector:T1->TValue):Aggregate<T1, Int>;
 

@@ -53,8 +53,74 @@ class SelectExpression implements ISqlStatement {
 	public var WithTies:Bool = false;
 	public var Percent:Bool = false;
 
+	/** `FOR UPDATE OF …` — which of the statement's sources the lock names; none names them all. */
+	public final LockTables:Array<ISqlSource> = [];
+
+	/**
+		Marked as a `WITH` member: a statement selecting from this one hoists it into a WITH clause
+		and reads it by name, rather than inlining it as a subquery. `AsCte` sets it.
+	**/
+	public var IsCte:Bool = false;
+
+	/** The name the CTE is given, or null for one made up when it is rendered. */
+	public var CteName:Null<String>;
+
+	/** A recursive CTE: its first union member reads the CTE itself, by name. */
+	public var IsRecursive:Bool = false;
+
+	/** A line comment above the statement, and one below it — `WithComments`. */
+	public var CommentAbove:Null<String>;
+	public var CommentBelow:Null<String>;
+
 	public function new(source:ISqlSource) {
 		this.Source = source;
+	}
+
+	/**
+		True when nothing has been added but the clauses that say *which* rows come back rather than
+		what they hold — DISTINCT, LIMIT, OFFSET, a lock, a comment. They name no columns, so they can
+		move into the statement this one wraps as they are; a WHERE or an ORDER BY cannot.
+	**/
+	public function IsEmptyApartFromRowRules():Bool {
+		return Selection == null
+			&& Where == null
+			&& Joins.length == 0
+			&& OrderBy.length == 0
+			&& GroupBy.length == 0
+			&& GroupingSets.length == 0
+			&& Having == null
+			&& Unions.length == 0
+			&& DistinctOn.length == 0
+			&& Windows.length == 0
+			&& With.length == 0;
+	}
+
+	/** Whether any of the row rules `IsEmptyApartFromRowRules` leaves aside is set. */
+	public function HasRowRules():Bool {
+		return IsDistinct
+			|| DistinctOn.length > 0
+			|| Limit != null
+			|| Offset != null
+			|| WithTies
+			|| Percent
+			|| Lock != None
+			|| CommentAbove != null
+			|| CommentBelow != null;
+	}
+
+	/** True when no clause at all has been added. */
+	public function IsEmpty():Bool {
+		return IsEmptyApartFromRowRules() && !HasRowRules();
+	}
+
+	/** `SELECT * FROM table`, and nothing else. */
+	public function IsSimpleTableQuery():Bool {
+		return Std.isOfType(Source, TableSqlSource) && IsEmpty();
+	}
+
+	/** `SELECT * FROM (subquery)`, and nothing else. */
+	public function IsSimpleWrapper():Bool {
+		return Std.isOfType(Source, QuerySqlSource) && IsEmpty();
 	}
 
 	/**
@@ -111,6 +177,14 @@ class SelectExpression implements ISqlStatement {
 		copy.Offset = Offset;
 		copy.WithTies = WithTies;
 		copy.Percent = Percent;
+		for (table in LockTables) {
+			copy.LockTables.push(table);
+		}
+		copy.IsCte = IsCte;
+		copy.CteName = CteName;
+		copy.IsRecursive = IsRecursive;
+		copy.CommentAbove = CommentAbove;
+		copy.CommentBelow = CommentBelow;
 		return copy;
 	}
 }

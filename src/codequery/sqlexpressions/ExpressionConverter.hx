@@ -90,19 +90,40 @@ class ExpressionConverter {
 		}
 
 		final declared = try Context.typeExpr(e) catch (_:Dynamic) return e;
-		final field = switch declared.expr {
-			case TField(_, FStatic(_, cf)): cf.get();
+		final called = switch declared.expr {
+			case TField(_, FStatic(_, cf)): {field: cf.get(), args: []};
+			// Called with values — `Booking.WithNamedUnit(wanted)` — the lambda it answers with
+			// is read with the function's parameters standing for what was passed.
+			case TCall({expr: TField(_, FStatic(_, cf))}, args): {field: cf.get(), args: args.map(Context.getTypedExpr)};
 			case _: return e;
 		}
 
-		final body = field.expr();
+		final body = called.field.expr();
 		if (body == null) {
 			return e;
 		}
 		// The function answers with the lambda, so what is wanted is what it returns.
 		return switch Unwrap(Context.getTypedExpr(body)).expr {
-			case EFunction(_, {expr: answered}): Returned(Unwrap(answered));
+			case EFunction(_, {args: parameters, expr: answered}):
+				final passed = new Map<String, Expr>();
+				for (index => parameter in parameters) {
+					if (index < called.args.length) {
+						passed.set(parameter.name, called.args[index]);
+					}
+				}
+				Substitute(Returned(Unwrap(answered)), passed);
 			case _: e;
+		}
+	}
+
+	/** The expression with each named identifier replaced by what stands for it. */
+	static function Substitute(e:Expr, passed:Map<String, Expr>):Expr {
+		if (!passed.keys().hasNext()) {
+			return e;
+		}
+		return switch e.expr {
+			case EConst(CIdent(name)) if (passed.exists(name)): passed.get(name);
+			case _: ExprTools.map(e, inner -> Substitute(inner, passed));
 		}
 	}
 
@@ -152,6 +173,10 @@ class ExpressionConverter {
 			case EUnop(OpNot, false, operand):
 				macro codequery.sqlexpressions.Expr.not(${ToSqlExpression(operand, bound, rows)});
 
+			// Inside a HAVING, a call on the aggregate set — `a.count()`, `a.key(r -> r.id)`.
+			case ECall(_, _) if (aggregateScope != null && IsAggregateCall(e, aggregateScope.set)):
+				ToAggregate(e, aggregateScope.set, aggregateScope.windows, aggregateScope.entities, aggregateScope.query);
+
 			// The calls of `Sql`, which is where what SQL has and Haxe has not is written.
 			case ECall({expr: EField({expr: EConst(CIdent("Sql"))}, name, _)}, args)
 				| ECall({expr: EField({expr: EField({expr: EConst(CIdent("codequery"))}, "Sql", _)}, name, _)}, args):
@@ -165,6 +190,10 @@ class ExpressionConverter {
 					final constant = ConstantOf(e);
 					if (constant != null) {
 						return constant;
+					}
+					final captured = Captured(e);
+					if (captured != null) {
+						return captured;
 					}
 					Context.error('Only a column of a row this lambda is written over, or a constant, can be used here',
 						e.pos);
@@ -203,7 +232,80 @@ class ExpressionConverter {
 				if (constant != null) {
 					return constant;
 				}
+				final captured = Captured(e);
+				if (captured != null) {
+					return captured;
+				}
 				Context.error('Cannot convert to SQL: ${e.toString()}', e.pos);
+		}
+	}
+
+	/**
+		A value the lambda closed over — a local, a field, a call — sent beside the statement as
+		a parameter, which is what C# does with a captured variable. Null where the expression is
+		not something a parameter can hold, or cannot be typed here at all.
+	**/
+	static function Captured(e:Expr):Null<Expr> {
+		final type = try Context.typeof(e) catch (_:Dynamic) return null;
+		return switch type.followWithAbstracts() {
+			case TAbstract(_.get() => {name: "Int" | "Float" | "Bool"}, _)
+				| TInst(_.get() => {name: "String" | "Date"}, _):
+				ParameterisedAs(e, type);
+			case _:
+				null;
+		}
+	}
+
+	/** Whether a call chain starts at the aggregate set — `a.count()`, `a.sum(…).filter(…)`. */
+	static function IsAggregateCall(e:Expr, set:String):Bool {
+		return switch Unwrap(e).expr {
+			case ECall({expr: EField(owner, _, _)}, _):
+				switch Unwrap(owner).expr {
+					case EConst(CIdent(name)): name == set;
+					case _: IsAggregateCall(owner, set);
+				}
+			case _:
+				false;
+		}
+	}
+
+	/** The HAVING being converted, where a call on its aggregate set is an aggregate. */
+	static var aggregateScope:Null<{set:String, windows:Map<String, Int>, entities:Array<Type>, query:Expr}>;
+
+	/**
+		Convert a predicate over the aggregates — `a -> a.count() > 5`, which is what `Having`
+		takes — into an expression building its `ISqlExpression`. The lambda's first parameter is
+		the aggregate set, as in `SelectAggregation`; a window the query defined follows it.
+	**/
+	public static function ConvertAggregatePredicate(predicate:Expr, rows:Array<Type>, query:Expr):Expr {
+		final fn = switch predicate.expr {
+			case EFunction(_, f): f;
+			case _: Context.error("Expected a predicate over the aggregates, e.g. a -> a.count() > 5", predicate.pos);
+		}
+		final entities = EntityRows(rows);
+		final windows = rows.length - entities.length;
+		if (fn.args.length != 1 + windows) {
+			Context.error('Expected a predicate taking ${1 + windows} parameter${windows == 0 ? "" : "s"}', predicate.pos);
+		}
+		TypeAggregation(fn, rows, predicate.pos);
+
+		final named = [for (index in 0...windows) fn.args[index + 1].name => entities.length + index];
+		final previous = aggregateScope;
+		aggregateScope = {set: fn.args[0].name, windows: named, entities: entities, query: query};
+		final converted = ToSqlExpression(Unwrap(fn.expr), new Map(), entities);
+		aggregateScope = previous;
+		return converted;
+	}
+
+	/** The rows of a query that are rows, leaving aside the windows it has defined. */
+	static function EntityRows(rows:Array<Type>):Array<Type> {
+		return rows.filter(row -> !IsWindowRow(row));
+	}
+
+	static function IsWindowRow(row:Type):Bool {
+		return switch row.follow() {
+			case TInst(t, _): t.get().name == "INamedWindow";
+			case _: false;
 		}
 	}
 
@@ -395,6 +497,9 @@ class ExpressionConverter {
 			case "scalar" | "correlated":
 				final correlated = name == "correlated";
 				macro codequery.sqlexpressions.Expr.scalar(${Statement(args[0])}, $v{correlated});
+
+			case "comment":
+				macro new codequery.sqlexpressions.SqlCommentExpression(${arg(0)}, ${args[1]});
 
 			// `any` and `all` stand on one side of a comparison, so the operator is picked up there.
 			case "any" | "all":
@@ -673,7 +778,8 @@ class ExpressionConverter {
 
 		// The aggregates stand in for the rows themselves, so the parameters are the set, then one
 		// per window the query has picked up.
-		final windows = rows.length - 1;
+		final entities = EntityRows(rows);
+		final windows = rows.length - entities.length;
 		if (fn.args.length != 1 + windows) {
 			Context.error('Expected an aggregate projection taking ${1 + windows} parameter${windows == 0 ? "" : "s"}',
 				projection.pos);
@@ -681,9 +787,8 @@ class ExpressionConverter {
 
 		TypeAggregation(fn, rows, projection.pos);
 
-		final bound = new Map<String, Int>();
-		bound.set(fn.args[0].name, 0);
-		final named = [for (index in 0...windows) fn.args[index + 1].name => index + 1];
+		// A window is one of the statement's sources, after the rows it is over.
+		final named = [for (index in 0...windows) fn.args[index + 1].name => entities.length + index];
 
 		final members = switch Unwrap(fn.expr).expr {
 			case EObjectDecl(fields): fields;
@@ -694,7 +799,7 @@ class ExpressionConverter {
 		final built = {
 			expr: EArrayDecl([
 				for (field in members) {
-					final value = ToAggregate(field.expr, fn.args[0].name, named, rows, query);
+					final value = ToAggregate(field.expr, fn.args[0].name, named, entities, query);
 					macro new codequery.sqlexpressions.ProjectionMember($v{field.field}, $value);
 				}
 			]),
@@ -707,15 +812,20 @@ class ExpressionConverter {
 		};
 	}
 
-	/** The parameter types an aggregate projection is typed against. */
+	/**
+		The parameter types an aggregate projection is typed against: the set over however many
+		rows the query has — `IAggregateSet` for one, `IAggregateSet2` for two, and so on — then
+		a window for each the query has defined.
+	**/
 	static function AggregationRows(rows:Array<Type>):Array<Type> {
-		final set = Context.getType("codequery.IAggregateSet");
+		final entities = EntityRows(rows);
+		final set = Context.getType("codequery.IAggregateSet" + (entities.length == 1 ? "" : Std.string(entities.length)));
 		final window = Context.getType("codequery.INamedWindow");
 		final typed = [switch set {
-			case TInst(t, _): TInst(t, [rows[0]]);
+			case TInst(t, _): TInst(t, entities);
 			case t: t;
 		}];
-		for (_ in 1...rows.length) {
+		for (_ in entities.length...rows.length) {
 			typed.push(window);
 		}
 		return typed;
@@ -727,8 +837,11 @@ class ExpressionConverter {
 		Context.typeExpr(macro @:pos(pos) ($lambda : $signature));
 	}
 
-	/** One member of an aggregate projection: a call on the aggregate set, perhaps over a window. */
-	static function ToAggregate(e:Expr, set:String, windows:Map<String, Int>, rows:Array<Type>, query:Expr):Expr {
+	/**
+		One member of an aggregate projection: a call on the aggregate set, perhaps over a window.
+		`entities` are the rows the query is over, which is what a selector inside is written over.
+	**/
+	static function ToAggregate(e:Expr, set:String, windows:Map<String, Int>, entities:Array<Type>, query:Expr):Expr {
 		final e = Unwrap(e);
 		return switch e.expr {
 			// `<aggregate>.over(w)`
@@ -737,49 +850,50 @@ class ExpressionConverter {
 					case EConst(CIdent(name)) if (windows.exists(name)): windows[name];
 					case _: Context.error("over() takes a window this query has defined", window.pos);
 				}
-				final aggregate = ToAggregate({expr: inner, pos: e.pos}, set, windows, rows, query);
+				final aggregate = ToAggregate({expr: inner, pos: e.pos}, set, windows, entities, query);
 				macro $aggregate.OverWindow(${WindowAt(query, named)});
 
 			// `<aggregate>.overRows(w -> …)` — a window written out rather than named.
 			case ECall({expr: EField({expr: inner}, "overRows", _)}, [spec]):
-				final window = ConvertWindow(spec, [rows[0]]);
+				final window = ConvertWindow(spec, entities);
 				final partitionBy = window.partitionBy;
 				final orderBy = window.orderBy;
 				final frame = window.frame;
-				final aggregate = ToAggregate({expr: inner, pos: e.pos}, set, windows, rows, query);
+				final aggregate = ToAggregate({expr: inner, pos: e.pos}, set, windows, entities, query);
 				macro $aggregate.OverDefinition(
 					new codequery.sqlexpressions.WindowDefinition($partitionBy, $orderBy, $frame));
 
 			// `<aggregate>.filter(r -> …)`
 			case ECall({expr: EField({expr: inner}, "filter", _)}, [predicate]):
-				final condition = Convert(predicate, [rows[0]]);
-				final aggregate = ToAggregate({expr: inner, pos: e.pos}, set, windows, rows, query);
+				final condition = Convert(predicate, entities);
+				final aggregate = ToAggregate({expr: inner, pos: e.pos}, set, windows, entities, query);
 				macro $aggregate.Filtered($condition);
 
 			// `<aggregate>.distinct()`
 			case ECall({expr: EField({expr: inner}, "distinct", _)}, []):
-				final aggregate = ToAggregate({expr: inner, pos: e.pos}, set, windows, rows, query);
+				final aggregate = ToAggregate({expr: inner, pos: e.pos}, set, windows, entities, query);
 				macro $aggregate.Distinctly();
 
-
+			// `<set>.key(r -> r.unitId)` — the grouping key, or one member of it, which is a column
+			// of the rows rather than an aggregate over them.
+			case ECall({expr: EField({expr: EConst(CIdent(name))}, "key", _)}, [selector]) if (name == set):
+				ConvertKey(selector, entities);
 
 			case ECall({expr: EField({expr: EConst(CIdent(name))}, fn, _)}, args) if (name == set):
-				Aggregate(fn, args, rows, e.pos);
+				Aggregate(fn, args, entities, e.pos);
 
 			case _:
 				Context.error('An aggregate projection selects aggregates, not ${e.toString()}', e.pos);
 		}
 	}
 
-	static function Aggregate(fn:String, args:Array<Expr>, rows:Array<Type>, pos:Position):Expr {
-		final row = [rows[0]];
-
+	static function Aggregate(fn:String, args:Array<Expr>, entities:Array<Type>, pos:Position):Expr {
 		// The window functions are not aggregates and have a node of their own.
 		final windowed = WindowFunctionNamed(fn);
 		if (windowed != null) {
 			final arguments = {
-				expr: EArrayDecl(args.length == 0 ? [] : [ConvertKey(args[0], row)].concat(
-					args.length > 1 ? [ToSqlExpression(args[1], new Map(), rows)] : [])),
+				expr: EArrayDecl(args.length == 0 ? [] : [ConvertKey(args[0], entities)].concat(
+					args.length > 1 ? [ToSqlExpression(args[1], new Map(), entities)] : [])),
 				pos: pos
 			};
 			return macro new codequery.sqlexpressions.WindowFunctionExpression(
@@ -790,7 +904,7 @@ class ExpressionConverter {
 		if (fn == "count") {
 			return macro new codequery.sqlexpressions.AggregateSqlExpression($kind);
 		}
-		final argument = ConvertKey(args[0], row);
+		final argument = ConvertKey(args[0], entities);
 		final distinct = fn == "countDistinct";
 		return macro new codequery.sqlexpressions.AggregateSqlExpression($kind, $argument, $v{distinct});
 	}
@@ -1068,6 +1182,10 @@ class ExpressionConverter {
 		and which method is called depends on whether the source is a table or another query.
 	**/
 	public static function Join(self:Expr, source:Expr, on:Null<Expr>, joinType:String):Expr {
+		if (Omitted(on) && IsRelation(source)) {
+			return RelationJoin(self, source, joinType);
+		}
+
 		final rows = EntitiesOf(self).concat([EntityOf(source)]);
 		if (rows.length > MaxRows) {
 			Context.error('A query can join up to $MaxRows rows, as in C#; this one would have ${rows.length}',
@@ -1079,7 +1197,7 @@ class ExpressionConverter {
 		final inner = macro(cast $source : codequery.queries.SelectQueryImpl);
 
 		// A cross join has no condition, so it is left off rather than passed as null.
-		final joined = if (on == null) {
+		final joined = if (Omitted(on)) {
 			IsTable(source) ? macro $query.JoinTable($kind, $source) : macro $query.JoinQuery($kind, $inner);
 		} else {
 			final condition = Convert(on, rows);
@@ -1097,6 +1215,103 @@ class ExpressionConverter {
 	}
 
 	/**
+		A relationship rather than a source: a function answering with the join's condition, as
+		C#'s `Booking.WithUnit` does — `public static function WithUnit() return (b:Booking, u:Unit)
+		-> u.id == b.unitId`. The table joined to is the last parameter's, so the join says only
+		what relates the two.
+	**/
+	static function IsRelation(source:Expr):Bool {
+		return RelationType(source) != null;
+	}
+
+	/** The condition's type behind a relationship: the function's, or what it answers with. */
+	static function RelationType(source:Expr):Null<Type> {
+		final type = try Context.typeof(source) catch (_:Dynamic) return null;
+		return switch type.follow() {
+			case TFun([], returned):
+				switch returned.follow() {
+					case TFun(_, _): returned;
+					case _: null;
+				}
+			case TFun(_, _): type;
+			case _: null;
+		}
+	}
+
+	/**
+		A join by relationship: the table is the one the relationship names, and its condition is
+		the relationship's, read over the rows of this query it asks for — by their types, so a
+		relationship on the row the query started from reads however many joins have happened
+		since — and the table joined last.
+	**/
+	static function RelationJoin(self:Expr, relation:Expr, joinType:String):Expr {
+		final parameters = switch RelationType(relation).follow() {
+			case TFun(args, _): args.map(arg -> arg.t);
+			case t: Context.error('A relationship is a function of the rows it joins, not ${t.toString()}', relation.pos);
+		}
+		if (parameters.length < 2) {
+			Context.error("A relationship names the row it hangs off and the row it joins to", relation.pos);
+		}
+
+		final target = parameters[parameters.length - 1];
+		final rows = EntitiesOf(self).concat([target]);
+		if (rows.length > MaxRows) {
+			Context.error('A query can join up to $MaxRows rows, as in C#; this one would have ${rows.length}',
+				relation.pos);
+		}
+
+		final lambda = ResolveLambda(relation);
+		final fn = switch lambda.expr {
+			case EFunction(_, f) if (f.args.length == parameters.length): f;
+			case _: Context.error("A relationship answers with a lambda over the rows it joins, e.g. (b, u) -> u.id == b.unitId",
+					relation.pos);
+		}
+		TypeLambda(lambda, parameters, macro :Bool);
+
+		// Each parameter but the last names the row of its type; the last is the table joined.
+		final bound = new Map<String, Int>();
+		for (index => arg in fn.args) {
+			bound.set(arg.name, index == fn.args.length - 1 ? rows.length - 1 : RowOfType(rows, parameters[index], relation.pos));
+		}
+		final condition = ToSqlExpression(fn.expr, bound, rows);
+
+		final tableType = target.toComplexType();
+		final tableName = ColumnsBuilder.TableNameOfType(target);
+		final table = macro new codequery.DbTable<$tableType>(new codequery.QualifiedTableName($v{tableName}));
+		final kind = macro $p{["codequery", "sqlexpressions", "JoinType", joinType]};
+		final query = macro(cast $self : codequery.queries.SelectQueryImpl);
+		return Answering(macro $query.JoinTable($kind, $table, $condition), rows);
+	}
+
+	/** The first of the query's rows that is of `type` — the one a relationship's parameter reads. */
+	static function RowOfType(rows:Array<Type>, type:Type, pos:Position):Int {
+		for (index in 0...rows.length - 1) {
+			if (Context.unify(rows[index], type) && Context.unify(type, rows[index])) {
+				return index;
+			}
+		}
+		return Context.error('This query has no row of ${type.toString()} for the relationship to read', pos);
+	}
+
+	/**
+		The recursive member of a `Recursive` CTE, built against the CTE itself: the lambda is
+		called with a query over a table of the CTE's name, typed as the rows this query is over.
+	**/
+	public static function RecursiveMember(member:Expr, name:Expr, rows:Array<Type>):Expr {
+		final fn = switch member.expr {
+			case EFunction(_, f) if (f.args.length == 1): f;
+			case _: Context.error("Expected a lambda over the CTE, e.g. org -> Query.select(Employee).InnerJoin(org, …)", member.pos);
+		}
+		final queryType = QueryTypeOf(rows);
+		final typed = {
+			expr: EFunction(FAnonymous, {args: [{name: fn.args[0].name, type: queryType}], ret: null, expr: fn.expr}),
+			pos: member.pos
+		};
+		final selfReference = macro(cast codequery.queries.SelectQueryImpl.OverTable(new codequery.QualifiedTableName($name)) : $queryType);
+		return macro(cast ($typed)($selfReference) : codequery.queries.SelectQueryImpl);
+	}
+
+	/**
 		One grouping set — a lambda naming one key, or a structure naming several:
 		`r -> r.unitId`, or `r -> {a: r.unitId, b: r.guestId}`.
 	**/
@@ -1104,6 +1319,10 @@ class ExpressionConverter {
 		final body = switch set.expr {
 			case EFunction(_, f): Unwrap(f.expr);
 			case _: Context.error("Expected a grouping set, e.g. r -> r.unitId", set.pos);
+		}
+		// `r -> {}` is the empty set — the grand total — which Haxe reads as an empty block.
+		if (body.expr.match(EBlock([]))) {
+			return macro [];
 		}
 		// One key is not a structure, so it is not a projection either.
 		if (!body.expr.match(EObjectDecl(_))) {
@@ -1133,13 +1352,18 @@ class ExpressionConverter {
 		rows the query now has. The cast is safe by construction: the arity is counted here.
 	**/
 	public static function Answering(query:Expr, rows:Array<Type>):Expr {
+		final queryType = QueryTypeOf(rows);
+		return macro(cast $query : $queryType);
+	}
+
+	/** The `ISelectQueryN` type for however many rows. */
+	public static function QueryTypeOf(rows:Array<Type>):ComplexType {
 		final name = "ISelectQuery" + (rows.length == 1 ? "" : Std.string(rows.length));
-		final queryType = TPath({
+		return TPath({
 			pack: ["codequery", "queries"],
 			name: name,
 			params: [for (row in rows) TPType(row.toComplexType())]
 		});
-		return macro(cast $query : $queryType);
 	}
 
 	/** Whether the thing being joined in is a table rather than another query. */

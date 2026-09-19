@@ -36,6 +36,20 @@ abstract Aggregate<TRow, T>(Dynamic) {
 		return cast this;
 	}
 
+
+	// Compared and combined as the value it stands for, which is what a HAVING does with it:
+	// `a.count() > 5`, `a.sum(r -> r.total) * 2 > 100`. Typed only; nothing here runs.
+	@:op(A == B) function eq(other:T):Bool return false;
+	@:op(A != B) function ne(other:T):Bool return false;
+	@:op(A < B) function lt(other:T):Bool return false;
+	@:op(A <= B) function le(other:T):Bool return false;
+	@:op(A > B) function gt(other:T):Bool return false;
+	@:op(A >= B) function ge(other:T):Bool return false;
+	@:op(A + B) function add(other:T):T return other;
+	@:op(A - B) function sub(other:T):T return other;
+	@:op(A * B) function mul(other:T):T return other;
+	@:op(A / B) function div(other:T):T return other;
+
 	/** `DISTINCT` inside the aggregate — over distinct values rather than every one. */
 	public function distinct():Aggregate<TRow, T> {
 		return cast this;
