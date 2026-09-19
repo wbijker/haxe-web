@@ -111,6 +111,36 @@ class SelectQueryExtensions {
 		return ExpressionConverter.Answering(macro ${Impl(self)}.SelectProjection($selection), [aggregated.row]);
 	}
 
+	/** `UNION` — the rows of both, with duplicates dropped. */
+	public static macro function Union(self:Expr, other:Expr):Expr {
+		return ExpressionConverter.SetOperation(self, other, "Union");
+	}
+
+	/** `UNION ALL` — the rows of both, duplicates kept. */
+	public static macro function UnionAll(self:Expr, other:Expr):Expr {
+		return ExpressionConverter.SetOperation(self, other, "UnionAll");
+	}
+
+	/** `INTERSECT` — the rows in both. */
+	public static macro function Intersect(self:Expr, other:Expr):Expr {
+		return ExpressionConverter.SetOperation(self, other, "Intersect");
+	}
+
+	/** `EXCEPT` — the rows of this one that are not in the other. */
+	public static macro function Except(self:Expr, other:Expr):Expr {
+		return ExpressionConverter.SetOperation(self, other, "Except");
+	}
+
+	/** `GROUP BY ROLLUP (…)` — the groups, and the totals down to the grand total. */
+	public static macro function GroupByRollup(self:Expr, keySelector:Expr):Expr {
+		return Grouped(self, keySelector, "Rollup");
+	}
+
+	/** `GROUP BY CUBE (…)` — the groups, and every combination of them. */
+	public static macro function GroupByCube(self:Expr, keySelector:Expr):Expr {
+		return Grouped(self, keySelector, "Cube");
+	}
+
 	/** `GROUP BY key`. Called again, it adds another term. */
 	public static macro function GroupBy(self:Expr, keySelector:Expr):Expr {
 		final rows = ExpressionConverter.EntitiesOf(self);
@@ -199,6 +229,13 @@ class SelectQueryExtensions {
 			? macro ${Impl(self)}.OrderByKey($key, $v{ascending})
 			: macro ${Impl(self)}.OrderByKey($key, $v{ascending}, $nulls);
 		return ExpressionConverter.Answering(ordered, rows);
+	}
+
+	static function Grouped(self:Expr, keySelector:Expr, mode:String):Expr {
+		final rows = ExpressionConverter.EntitiesOf(self);
+		final key = ExpressionConverter.ConvertKey(keySelector, rows);
+		final grouping = macro $p{["codequery", "sqlexpressions", "GroupingMode", mode]};
+		return ExpressionConverter.Answering(macro ${Impl(self)}.GroupByKey($key, $grouping), rows);
 	}
 
 	static function Existing(self:Expr, table:Expr, correlation:Expr, negate:Bool):Expr {

@@ -27,5 +27,6 @@ interface ISqlExpressionVisitor<T> {
 	function OnExists(e:ExistsSqlExpression):T;
 	function OnScalarSubquery(e:ScalarSubquerySqlExpression):T;
 	function OnQuantified(e:QuantifiedComparisonSqlExpression):T;
+	function OnWindowFunction(e:WindowFunctionExpression):T;
 	function OnOrderBy(e:OrderByExpression):T;
 }

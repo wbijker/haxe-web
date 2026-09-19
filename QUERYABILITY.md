@@ -28,19 +28,19 @@ types against this port. Worked in batches of ten, top down.
 
 ## Windows and aggregates
 
-- [ ] 21. `ROW_NUMBER`, `RANK`, `DENSE_RANK`
-- [ ] 22. `LEAD`, `LAG`
-- [ ] 23. `FIRST_VALUE`, `LAST_VALUE`
-- [ ] 24. Window frames — `ROWS`/`RANGE BETWEEN`
-- [ ] 25. An inline `OVER (…)`, without naming the window
-- [ ] 26. `FILTER (WHERE …)` on an aggregate
-- [ ] 27. `DISTINCT` inside any aggregate
+- [x] 21. `ROW_NUMBER`, `RANK`, `DENSE_RANK`
+- [x] 22. `LEAD`, `LAG`
+- [x] 23. `FIRST_VALUE`, `LAST_VALUE`
+- [x] 24. Window frames — `ROWS`/`RANGE BETWEEN`
+- [x] 25. An inline `OVER (…)`, without naming the window
+- [x] 26. `FILTER (WHERE …)` on an aggregate
+- [x] 27. `DISTINCT` inside any aggregate
 
 ## Statements
 
-- [ ] 28. `UNION`, `UNION ALL`
-- [ ] 29. `INTERSECT`, `EXCEPT`
-- [ ] 30. `GROUP BY ROLLUP`
+- [x] 28. `UNION`, `UNION ALL`
+- [x] 29. `INTERSECT`, `EXCEPT`
+- [x] 30. `GROUP BY ROLLUP`
 - [ ] 31. `GROUP BY CUBE`
 - [ ] 32. `GROUPING SETS`
 - [ ] 33. CTEs — `WITH`

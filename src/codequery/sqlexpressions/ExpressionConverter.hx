@@ -564,7 +564,30 @@ class ExpressionConverter {
 					case _: Context.error("over() takes a window this query has defined", window.pos);
 				}
 				final aggregate = ToAggregate({expr: inner, pos: e.pos}, set, windows, rows, query);
-				macro $aggregate.Over(${WindowAt(query, named)});
+				macro $aggregate.OverWindow(${WindowAt(query, named)});
+
+			// `<aggregate>.overRows(w -> …)` — a window written out rather than named.
+			case ECall({expr: EField({expr: inner}, "overRows", _)}, [spec]):
+				final window = ConvertWindow(spec, [rows[0]]);
+				final partitionBy = window.partitionBy;
+				final orderBy = window.orderBy;
+				final frame = window.frame;
+				final aggregate = ToAggregate({expr: inner, pos: e.pos}, set, windows, rows, query);
+				macro $aggregate.OverDefinition(
+					new codequery.sqlexpressions.WindowDefinition($partitionBy, $orderBy, $frame));
+
+			// `<aggregate>.filter(r -> …)`
+			case ECall({expr: EField({expr: inner}, "filter", _)}, [predicate]):
+				final condition = Convert(predicate, [rows[0]]);
+				final aggregate = ToAggregate({expr: inner, pos: e.pos}, set, windows, rows, query);
+				macro $aggregate.Filtered($condition);
+
+			// `<aggregate>.distinct()`
+			case ECall({expr: EField({expr: inner}, "distinct", _)}, []):
+				final aggregate = ToAggregate({expr: inner, pos: e.pos}, set, windows, rows, query);
+				macro $aggregate.Distinctly();
+
+
 
 			case ECall({expr: EField({expr: EConst(CIdent(name))}, fn, _)}, args) if (name == set):
 				Aggregate(fn, args, rows, e.pos);
@@ -576,14 +599,39 @@ class ExpressionConverter {
 
 	static function Aggregate(fn:String, args:Array<Expr>, rows:Array<Type>, pos:Position):Expr {
 		final row = [rows[0]];
-		final kind = macro $p{["codequery", "sqlexpressions", "AggregateType", AggregateNamed(fn, pos)]};
 
+		// The window functions are not aggregates and have a node of their own.
+		final windowed = WindowFunctionNamed(fn);
+		if (windowed != null) {
+			final arguments = {
+				expr: EArrayDecl(args.length == 0 ? [] : [ConvertKey(args[0], row)].concat(
+					args.length > 1 ? [ToSqlExpression(args[1], new Map(), rows)] : [])),
+				pos: pos
+			};
+			return macro new codequery.sqlexpressions.WindowFunctionExpression(
+				$p{["codequery", "sqlexpressions", "WindowFunction", windowed]}, $arguments);
+		}
+
+		final kind = macro $p{["codequery", "sqlexpressions", "AggregateType", AggregateNamed(fn, pos)]};
 		if (fn == "count") {
 			return macro new codequery.sqlexpressions.AggregateSqlExpression($kind);
 		}
 		final argument = ConvertKey(args[0], row);
 		final distinct = fn == "countDistinct";
 		return macro new codequery.sqlexpressions.AggregateSqlExpression($kind, $argument, $v{distinct});
+	}
+
+	static function WindowFunctionNamed(fn:String):Null<String> {
+		return switch fn {
+			case "rowNumber": "RowNumber";
+			case "rank": "Rank";
+			case "denseRank": "DenseRank";
+			case "lead": "Lead";
+			case "lag": "Lag";
+			case "firstValue": "FirstValue";
+			case "lastValue": "LastValue";
+			case _: null;
+		}
 	}
 
 	static function AggregateNamed(fn:String, pos:Position):String {
@@ -607,7 +655,7 @@ class ExpressionConverter {
 		the partition keys and ordering terms it describes. The statement names it; a name is not
 		something the spec carries.
 	**/
-	public static function ConvertWindow(spec:Expr, rows:Array<Type>):{partitionBy:Expr, orderBy:Expr} {
+	public static function ConvertWindow(spec:Expr, rows:Array<Type>):{partitionBy:Expr, orderBy:Expr, frame:Expr} {
 		final fn = switch spec.expr {
 			case EFunction(_, f) if (f.args.length == 1): f;
 			case _: Context.error("Expected a window spec, e.g. w -> w.PartitionBy(a -> a.id)", spec.pos);
@@ -615,22 +663,30 @@ class ExpressionConverter {
 
 		final partitionBy:Array<Expr> = [];
 		final orderBy:Array<Expr> = [];
-		WalkWindow(Unwrap(fn.expr), fn.args[0].name, rows, partitionBy, orderBy);
+		final frame:Array<Expr> = [];
+		WalkWindow(Unwrap(fn.expr), fn.args[0].name, rows, partitionBy, orderBy, frame);
 
 		return {
 			partitionBy: {expr: EArrayDecl(partitionBy), pos: spec.pos},
-			orderBy: {expr: EArrayDecl(orderBy), pos: spec.pos}
+			orderBy: {expr: EArrayDecl(orderBy), pos: spec.pos},
+			frame: frame.length == 0 ? macro null : frame[0]
 		};
 	}
 
 	/** The chain is read from the outside in, so the terms are collected in the order written. */
-	static function WalkWindow(e:Expr, spec:String, rows:Array<Type>, partitionBy:Array<Expr>, orderBy:Array<Expr>):Void {
+	static function WalkWindow(e:Expr, spec:String, rows:Array<Type>, partitionBy:Array<Expr>, orderBy:Array<Expr>,
+			frame:Array<Expr>):Void {
 		switch Unwrap(e).expr {
 			case EConst(CIdent(name)) if (name == spec):
 				return;
 
 			case ECall({expr: EField(owner, call, _)}, args):
-				WalkWindow(owner, spec, rows, partitionBy, orderBy);
+				WalkWindow(owner, spec, rows, partitionBy, orderBy, frame);
+				if (call == "Rows" || call == "Range") {
+					final kind = macro $p{["codequery", "sqlexpressions", "FrameKind", call]};
+					frame.push(macro new codequery.sqlexpressions.WindowFrame($kind, ${args[0]}, ${args[1]}));
+					return;
+				}
 				final key = ConvertKey(args[0], rows);
 				switch call {
 					case "PartitionBy":
@@ -642,7 +698,7 @@ class ExpressionConverter {
 							: macro codequery.sqlexpressions.NullsOrdering.Default;
 						orderBy.push(macro new codequery.sqlexpressions.OrderByExpression($key, $v{ascending}, $nulls));
 					case _:
-						Context.error('A window is partitioned and ordered; $call is neither', e.pos);
+						Context.error('A window is partitioned, ordered and framed; $call is none of them', e.pos);
 				}
 
 			case _:
@@ -791,6 +847,14 @@ class ExpressionConverter {
 	/** The row a window arrives as. */
 	public static function WindowRow():Type {
 		return Context.getType("codequery.INamedWindow");
+	}
+
+	/** `UNION`, `INTERSECT` and `EXCEPT`, which put two statements' rows together. */
+	public static function SetOperation(self:Expr, other:Expr, type:String):Expr {
+		final rows = EntitiesOf(self);
+		final kind = macro $p{["codequery", "sqlexpressions", "SetOperationType", type]};
+		final right = macro(cast $other : codequery.queries.SelectQueryImpl);
+		return Answering(macro(cast $self : codequery.queries.SelectQueryImpl).UnionWith($kind, $right), rows);
 	}
 
 	/** As many rows as C# has an `ISelectQuery` for. */

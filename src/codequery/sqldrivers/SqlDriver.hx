@@ -19,6 +19,9 @@ import codequery.sqlexpressions.SqlCastExpression;
 import codequery.sqlexpressions.SqlExpressionWalker;
 import codequery.sqlexpressions.SqlParameterExpression;
 import codequery.sqlexpressions.SqlType;
+import codequery.sqlexpressions.WindowDefinition;
+import codequery.sqlexpressions.WindowFrame;
+import codequery.sqlexpressions.WindowFunctionExpression;
 import codequery.sqlexpressions.DeleteExpression;
 import codequery.sqlexpressions.ISqlStatement;
 import codequery.sqlexpressions.InsertExpression;
@@ -174,7 +177,12 @@ class SqlDriver implements ISqlExpressionVisitor<String> {
 			sql += ' WHERE ${RenderExpression(expression.Where)}';
 		}
 		if (expression.GroupBy.length > 0) {
-			sql += ' GROUP BY ${expression.GroupBy.map(RenderExpression).join(", ")}';
+			final keys = expression.GroupBy.map(RenderExpression).join(", ");
+			sql += switch expression.Grouping {
+				case None: ' GROUP BY $keys';
+				case Rollup: ' GROUP BY ROLLUP ($keys)';
+				case Cube: ' GROUP BY CUBE ($keys)';
+			}
 		}
 		if (expression.Having != null) {
 			sql += ' HAVING ${RenderExpression(expression.Having)}';
@@ -186,6 +194,19 @@ class SqlDriver implements ISqlExpressionVisitor<String> {
 			sql += ' ORDER BY ${expression.OrderBy.map(RenderOrderBy).join(", ")}';
 		}
 		sql += RowLimit(expression);
+
+		// A set operation joins two whole statements, so it comes after everything either says.
+		for (union in expression.Unions) {
+			final keyword = switch union.Type {
+				case Union: "UNION";
+				case UnionAll: "UNION ALL";
+				case Intersect: "INTERSECT";
+				case IntersectAll: "INTERSECT ALL";
+				case Except: "EXCEPT";
+				case ExceptAll: "EXCEPT ALL";
+			}
+			sql += ' $keyword ${Against(union.Query.AllSources(), () -> Statement(union.Query))}';
+		}
 		return sql;
 	}
 
@@ -378,8 +399,56 @@ class SqlDriver implements ISqlExpressionVisitor<String> {
 		return '${RenderExpression(e.Value)} ${RenderOperator(e.Operator)} $quantifier ($of)';
 	}
 
+	public function OnWindowFunction(e:WindowFunctionExpression):String {
+		final name = switch e.Function {
+			case RowNumber: "ROW_NUMBER";
+			case Rank: "RANK";
+			case DenseRank: "DENSE_RANK";
+			case Lead: "LEAD";
+			case Lag: "LAG";
+			case FirstValue: "FIRST_VALUE";
+			case LastValue: "LAST_VALUE";
+		}
+		// A window function only means anything over a window, so it always has one.
+		final over = e.Window != null ? e.Window.Name : RenderOver(e.Over);
+		return '$name(${e.Arguments.map(RenderExpression).join(", ")}) OVER $over';
+	}
+
 	public function OnOrderBy(e:OrderByExpression):String {
 		return RenderOrderBy(e);
+	}
+
+	/** A window written out where it is used, rather than named on the statement. */
+	function RenderOver(over:WindowDefinition):String {
+		final parts = [];
+		if (over.PartitionBy.length > 0) {
+			parts.push('PARTITION BY ${over.PartitionBy.map(RenderExpression).join(", ")}');
+		}
+		if (over.OrderBy.length > 0) {
+			parts.push('ORDER BY ${over.OrderBy.map(RenderOrderBy).join(", ")}');
+		}
+		if (over.Frame != null) {
+			parts.push(RenderFrame(over.Frame));
+		}
+		return '(${parts.join(" ")})';
+	}
+
+	function RenderFrame(frame:WindowFrame):String {
+		final kind = switch frame.Kind {
+			case Rows: "ROWS";
+			case Range: "RANGE";
+		}
+		return '$kind BETWEEN ${RenderBound(frame.Start)} AND ${RenderBound(frame.End)}';
+	}
+
+	function RenderBound(bound:codequery.sqlexpressions.WindowBound):String {
+		return switch bound {
+			case UnboundedPreceding: "UNBOUNDED PRECEDING";
+			case Preceding(rows): '$rows PRECEDING';
+			case CurrentRow: "CURRENT ROW";
+			case Following(rows): '$rows FOLLOWING';
+			case UnboundedFollowing: "UNBOUNDED FOLLOWING";
+		}
 	}
 
 	function RenderType(type:SqlType):String {
@@ -417,11 +486,23 @@ class SqlDriver implements ISqlExpressionVisitor<String> {
 			case Min: "MIN";
 			case Max: "MAX";
 		}
+		if (aggregate.Distinct && aggregate.Argument == null) {
+			throw "DISTINCT needs something to be distinct about, and this aggregate counts rows";
+		}
 		final distinct = aggregate.Distinct ? "DISTINCT " : "";
 		// COUNT with nothing to count counts rows.
 		final argument = aggregate.Argument == null ? "*" : RenderExpression(aggregate.Argument);
-		final sql = '$name($distinct$argument)';
-		return aggregate.Window == null ? sql : '$sql OVER ${aggregate.Window.Name}';
+		var sql = '$name($distinct$argument)';
+
+		if (aggregate.Filter != null) {
+			sql += ' FILTER (WHERE ${RenderExpression(aggregate.Filter)})';
+		}
+		if (aggregate.Window != null) {
+			sql += ' OVER ${aggregate.Window.Name}';
+		} else if (aggregate.Over != null) {
+			sql += ' OVER ${RenderOver(aggregate.Over)}';
+		}
+		return sql;
 	}
 
 	function RenderWindowDefinition(window:NamedWindowSqlSource):String {

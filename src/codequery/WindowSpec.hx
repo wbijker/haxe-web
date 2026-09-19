@@ -21,4 +21,12 @@ extern class WindowSpec<T1> {
 
 	/** `ORDER BY key DESC`, within the window. */
 	public function OrderByDesc<TKey>(key:T1->TKey, ?nulls:NullsOrdering):WindowSpec<T1>;
+
+	/** `ROWS BETWEEN start AND end` — which rows of the partition are actually read. */
+	public function Rows(start:codequery.sqlexpressions.WindowBound,
+		end:codequery.sqlexpressions.WindowBound):WindowSpec<T1>;
+
+	/** `RANGE BETWEEN start AND end`. */
+	public function Range(start:codequery.sqlexpressions.WindowBound,
+		end:codequery.sqlexpressions.WindowBound):WindowSpec<T1>;
 }

@@ -18,6 +18,12 @@ class SelectExpression implements ISqlStatement {
 
 	public final GroupBy:Array<ISqlExpression> = [];
 
+	/** Plain grouping, or one of the two that also group the totals. */
+	public var Grouping:GroupingMode = None;
+
+	/** The statements this one's rows are put together with. */
+	public final Unions:Array<UnionSqlExpression> = [];
+
 	public var Having:Null<ISqlExpression>;
 
 	/** Windows defined on this statement, which its aggregates read over by name. */
@@ -64,6 +70,10 @@ class SelectExpression implements ISqlStatement {
 		copy.Where = Where;
 		for (key in GroupBy) {
 			copy.GroupBy.push(key);
+		}
+		copy.Grouping = Grouping;
+		for (union in Unions) {
+			copy.Unions.push(union);
 		}
 		copy.Having = Having;
 		for (window in Windows) {

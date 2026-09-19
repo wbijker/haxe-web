@@ -5,6 +5,9 @@ import codequery.sqlexpressions.ISqlExpression;
 import codequery.sqlexpressions.ISqlSource;
 import codequery.sqlexpressions.JoinSqlExpression;
 import codequery.sqlexpressions.ExistsSqlExpression;
+import codequery.sqlexpressions.GroupingMode;
+import codequery.sqlexpressions.SetOperationType;
+import codequery.sqlexpressions.UnionSqlExpression;
 import codequery.sqlexpressions.JoinType;
 import codequery.sqlexpressions.NamedWindowSqlSource;
 import codequery.sqlexpressions.NullsOrdering;
@@ -54,8 +57,18 @@ class SelectQueryImpl {
 			: new BinarySqlExpression(expression.Where, SqlBinaryOperator.And, condition);
 	}
 
-	public function GroupByKey(key:ISqlExpression):SelectQueryImpl {
-		return Fork(expression -> expression.GroupBy.push(key));
+	public function GroupByKey(key:ISqlExpression, mode:GroupingMode = None):SelectQueryImpl {
+		return Fork(expression -> {
+			expression.GroupBy.push(key);
+			if (mode != None) {
+				expression.Grouping = mode;
+			}
+		});
+	}
+
+	/** What the set operations compile down to. */
+	public function UnionWith(type:SetOperationType, other:SelectQueryImpl):SelectQueryImpl {
+		return Fork(expression -> expression.Unions.push(new UnionSqlExpression(type, other.ToExpression())));
 	}
 
 	public function HavingCondition(condition:ISqlExpression):SelectQueryImpl {

@@ -62,6 +62,9 @@ class SqlExpressionWalker {
 		final quantified = Std.downcast(cast e, QuantifiedComparisonSqlExpression);
 		if (quantified != null) return visitor.OnQuantified(quantified);
 
+		final windowed = Std.downcast(cast e, WindowFunctionExpression);
+		if (windowed != null) return visitor.OnWindowFunction(windowed);
+
 		final ordering = Std.downcast(cast e, OrderByExpression);
 		if (ordering != null) return visitor.OnOrderBy(ordering);
 
