@@ -1,0 +1,5 @@
+# Build/run on the eval target (Haxe's built-in interpreter).
+# Usage: haxe build.hxml
+--class-path src
+--main Main
+--interp
