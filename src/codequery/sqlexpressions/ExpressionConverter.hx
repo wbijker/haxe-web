@@ -91,10 +91,10 @@ class ExpressionConverter {
 		final e = Unwrap(e);
 		return switch e.expr {
 			case EBinop(op, left, right):
-				final sqlOp = ToSqlOperator(op, e.pos);
+				final factory = FactoryFor(op, e.pos);
 				final l = ToSqlExpression(left, bound, rows);
 				final r = ToSqlExpression(right, bound, rows);
-				macro new codequery.sqlexpressions.BinarySqlExpression($l, $sqlOp, $r);
+				macro $factory($l, $r);
 
 			case EField(owner, field, _):
 				switch Unwrap(owner).expr {
@@ -107,50 +107,54 @@ class ExpressionConverter {
 				}
 
 			case EConst(CInt(v, _)):
-				macro new codequery.sqlexpressions.ConstSqlExpression(SqlConstInt($v{Std.parseInt(v)}));
+				macro ${Factory("constInt")}($v{Std.parseInt(v)});
 
 			case EConst(CFloat(v, _)):
-				macro new codequery.sqlexpressions.ConstSqlExpression(SqlConstFloat($v{Std.parseFloat(v)}));
+				macro ${Factory("constFloat")}($v{Std.parseFloat(v)});
 
 			case EConst(CString(s, _)):
-				macro new codequery.sqlexpressions.ConstSqlExpression(SqlConstString($v{s}));
+				macro ${Factory("constString")}($v{s});
 
 			case EConst(CIdent("true")):
-				macro new codequery.sqlexpressions.ConstSqlExpression(SqlConstBool(true));
+				macro ${Factory("constBool")}(true);
 
 			case EConst(CIdent("false")):
-				macro new codequery.sqlexpressions.ConstSqlExpression(SqlConstBool(false));
+				macro ${Factory("constBool")}(false);
 
 			case EConst(CIdent("null")):
-				macro new codequery.sqlexpressions.ConstSqlExpression(SqlConstNull);
+				macro ${Factory("constNull")}();
 
 			// A negative literal is unary minus over a positive one, not a constant of its own.
 			case EUnop(OpNeg, false, {expr: EConst(CInt(v, _))}):
-				macro new codequery.sqlexpressions.ConstSqlExpression(SqlConstInt($v{-Std.parseInt(v)}));
+				macro ${Factory("constInt")}($v{-Std.parseInt(v)});
 
 			case _:
 				Context.error('Cannot convert to SQL: ${e.toString()}', e.pos);
 		}
 	}
 
-	static function ToSqlOperator(op:Binop, pos:Position):Expr {
-		final name = switch op {
-			case OpEq: "Equal";
-			case OpNotEq: "NotEqual";
-			case OpLt: "LessThan";
-			case OpLte: "LessThanOrEqual";
-			case OpGt: "GreaterThan";
-			case OpGte: "GreaterThanOrEqual";
-			case OpBoolAnd: "And";
-			case OpBoolOr: "Or";
-			case OpAdd: "Add";
-			case OpSub: "Subtract";
-			case OpMult: "Multiply";
-			case OpDiv: "Divide";
-			case OpMod: "Modulo";
+	static function FactoryFor(op:Binop, pos:Position):Expr {
+		return Factory(switch op {
+			case OpEq: "equal";
+			case OpNotEq: "notEqual";
+			case OpLt: "lessThan";
+			case OpLte: "lessThanOrEqual";
+			case OpGt: "greaterThan";
+			case OpGte: "greaterThanOrEqual";
+			case OpBoolAnd: "and";
+			case OpBoolOr: "or";
+			case OpAdd: "add";
+			case OpSub: "subtract";
+			case OpMult: "multiply";
+			case OpDiv: "divide";
+			case OpMod: "modulo";
 			case _: Context.error('Operator ${new Printer().printBinop(op)} has no SQL equivalent', pos);
-		}
-		return macro $p{["codequery", "sqlexpressions", "SqlBinaryOperator", name]};
+		});
+	}
+
+	/** One of `Expr`'s factory methods, which is what a converted expression is built out of. */
+	static function Factory(name:String):Expr {
+		return macro $p{["codequery", "sqlexpressions", "Expr", name]};
 	}
 
 	/**
@@ -177,17 +181,51 @@ class ExpressionConverter {
 	}
 
 	/**
-		A join: the source brings a row, the condition is written over the rows of both sides, and
-		which runtime method is called depends on whether the source is a table or another query.
+		A join: the source brings a row, the condition is written over every row the query then has,
+		and which method is called depends on whether the source is a table or another query.
 	**/
 	public static function Join(self:Expr, source:Expr, on:Null<Expr>, joinType:String):Expr {
 		final rows = EntitiesOf(self).concat([EntityOf(source)]);
-		final kind = macro $p{["codequery", "sqlexpressions", "JoinType", joinType]};
-		final condition = on == null ? macro null : Convert(on, rows);
+		if (rows.length > MaxRows) {
+			Context.error('A query can join up to $MaxRows rows, as in C#; this one would have ${rows.length}',
+				source.pos);
+		}
 
-		return IsTable(source)
-			? macro $self.JoinTable($kind, $source, $condition)
-			: macro $self.JoinQuery($kind, $source, $condition);
+		final kind = macro $p{["codequery", "sqlexpressions", "JoinType", joinType]};
+		final query = macro(cast $self : codequery.queries.SelectQueryImpl);
+		final inner = macro(cast $source : codequery.queries.SelectQueryImpl);
+
+		// A cross join has no condition, so it is left off rather than passed as null.
+		final joined = if (on == null) {
+			IsTable(source) ? macro $query.JoinTable($kind, $source) : macro $query.JoinQuery($kind, $inner);
+		} else {
+			final condition = Convert(on, rows);
+			IsTable(source)
+				? macro $query.JoinTable($kind, $source, $condition)
+				: macro $query.JoinQuery($kind, $inner, $condition);
+		}
+
+		return Answering(joined, rows);
+	}
+
+	/** As many rows as C# has an `ISelectQuery` for. */
+	public static final MaxRows = 8;
+
+	/**
+		Give a statement back the row types it is over.
+
+		Building a statement needs no generics — `SelectQueryImpl` does all of it — so a clause
+		answers with one of those, and this puts it back into the `ISelectQueryN` for however many
+		rows the query now has. The cast is safe by construction: the arity is counted here.
+	**/
+	public static function Answering(query:Expr, rows:Array<Type>):Expr {
+		final name = "ISelectQuery" + (rows.length == 1 ? "" : Std.string(rows.length));
+		final queryType = TPath({
+			pack: ["codequery", "queries"],
+			name: name,
+			params: [for (row in rows) TPType(row.toComplexType())]
+		});
+		return macro(cast $query : $queryType);
 	}
 
 	/** Whether the thing being joined in is a table rather than another query. */
@@ -211,10 +249,7 @@ class ExpressionConverter {
 		return row.superClass != null && HasInterface(row.superClass.t.get(), name);
 	}
 
-	/** The nulls ordering an `OrderBy` was given, or `Default` where it was left out. */
-	public static function NullsOrDefault(nulls:Null<Expr>):Expr {
-		return Omitted(nulls) ? macro codequery.sqlexpressions.NullsOrdering.Default : nulls;
-	}
+
 
 	/** The row types a query is over, read from the static type of the query itself. */
 	public static function EntitiesOf(query:Expr):Array<Type> {

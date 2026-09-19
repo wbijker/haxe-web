@@ -39,6 +39,23 @@ class Main {
 
 		show2(db.Deliveries.From().CrossJoin(db.Lines));
 
+		// Joining on: each join adds a row, and every lambda after it takes one more parameter.
+		Sys.println("");
+		Sys.println(driver.ToSql(db.Deliveries.From()
+			.InnerJoin(db.Lines, (d, l) -> d.id == l.deliveryId)
+			.InnerJoin(db.Stores, (d, l, s) -> d.fromStoreId == s.id)
+			.Where((d, l, s) -> s.code == "JHB")
+			.ToExpression()));
+
+		Sys.println(driver.ToSql(db.Deliveries.From()
+			.InnerJoin(db.Lines, (d, l) -> d.id == l.deliveryId)
+			.InnerJoin(db.Stores, (d, l, from) -> d.fromStoreId == from.id)
+			.LeftJoin(db.Stores, (d, l, from, to) -> d.toStoreId == to.id)
+			.Where((d, l, from, to) -> from.code != to.code && l.quantity > 0)
+			.OrderBy((d, l, from, to) -> to.name)
+			.Limit(50)
+			.ToExpression()));
+
 		// Counting. A query that counts what it reads selects COUNT(*) in place of its rows.
 		Sys.println("");
 		Sys.println(driver.ToSql(db.Deliveries.From().Where(a -> a.id > 12).OrderBy(a -> a.id).CountExpression()));

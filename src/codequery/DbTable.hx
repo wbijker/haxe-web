@@ -2,7 +2,7 @@ package codequery;
 
 import codequery.queries.IQuery;
 import codequery.queries.ISelectQuery;
-import codequery.queries.SelectQuery;
+import codequery.queries.SelectQueryImpl;
 import codequery.sqlexpressions.ColumnsBuilder;
 #if macro
 import haxe.macro.Context;
@@ -39,7 +39,7 @@ class DbTable<T> implements IQuery<T> {
 	}
 
 	public function From():ISelectQuery<T> {
-		return SelectQuery.OverTable(Table);
+		return cast SelectQueryImpl.OverTable(Table);
 	}
 
 	/**
