@@ -60,12 +60,9 @@ class SchemaBuilder {
 			case t: Context.error('${t.toString()} is not an entity class', pos);
 		}
 
-		final columns:Array<Expr> = [];
-		ColumnsOf(row, [], [], columns, pos);
-
-		final list = {expr: EArrayDecl(columns), pos: pos};
-		return macro new codequery.migrations.DatabaseTableDefinition(
-			$v{ColumnsBuilder.TableNameOf(row)}, $list);
+		// The inspector reads the keys and indexes as well as the columns, so a schema built here
+		// says everything the entities say.
+		return SchemaInspector.TableExpr(row, pos);
 	}
 
 	/** The same walk `ColumnsBuilder` does, so a schema and a query agree about a table. */

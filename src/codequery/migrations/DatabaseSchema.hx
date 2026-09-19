@@ -5,9 +5,12 @@ package codequery.migrations;
 	records. A migration is the difference between two of these.
 **/
 class DatabaseSchema {
-	public final Version:Int;
-	public final Name:Null<String>;
-	public final Tables:Array<DatabaseTableDefinition>;
+	public var Version:Int;
+	public var Name:Null<String>;
+	public var Tables:Array<DatabaseTableDefinition>;
+	public var Types:Array<DatabaseObjectTypeDefinition> = [];
+	public var Routines:Array<DatabaseRoutineDefinition> = [];
+	public var Seeds:Array<SeedDataDefinition> = [];
 
 	public function new(tables:Array<DatabaseTableDefinition>, ?name:String, version:Int = 1) {
 		this.Tables = tables;
