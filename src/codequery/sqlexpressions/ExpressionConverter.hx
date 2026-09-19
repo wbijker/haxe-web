@@ -175,6 +175,240 @@ class ExpressionConverter {
 		return Context.error('${row.name} has no field "$field"', pos);
 	}
 
+	/**
+		Convert a projection lambda — `a -> {store: a.fromStoreId, note: a.noteNo}`, the
+		`SqlProjection` of the C# API — into the selection it describes and the row type it leaves.
+
+		A lambda naming a row rather than building a structure — `(a, b) -> b`, which is what
+		`Reduce` is for — selects that row's columns and keeps its type.
+	**/
+	public static function ConvertProjection(projection:Expr, rows:Array<Type>):{selection:Expr, row:Type} {
+		final fn = switch projection.expr {
+			case EFunction(_, f): f;
+			case _: Context.error("Expected a projection, e.g. a -> {note: a.noteNo}", projection.pos);
+		}
+		if (fn.args.length != rows.length) {
+			Context.error('Expected a projection taking ${rows.length} parameter${rows.length == 1 ? "" : "s"}',
+				projection.pos);
+		}
+
+		final bound = new Map<String, Int>();
+		for (index => arg in fn.args) {
+			bound.set(arg.name, index);
+		}
+
+		// Typed first, and deliberately: the walk below only reads syntax, so if it ran first an
+		// editor would get nothing back from inside the projection. Typing is what answers that.
+		final row = ProjectedRow(fn, rows, projection.pos);
+		return {selection: ToProjection(Unwrap(fn.expr), bound, rows), row: row};
+	}
+
+	/**
+		The type a projection answers with, taken from the lambda itself: give its parameters the
+		row types and the compiler works out the rest, which is also what lets an editor see inside.
+	**/
+	static function ProjectedRow(fn:Function, rows:Array<Type>, pos:Position):Type {
+		final args:Array<FunctionArg> = [
+			for (index => arg in fn.args) {name: arg.name, type: rows[index].toComplexType()}
+		];
+		final typed = {expr: EFunction(FAnonymous, {args: args, ret: null, expr: fn.expr}), pos: pos};
+		return switch Context.typeof(typed).follow() {
+			case TFun(_, ret): ret;
+			case t: Context.error('A projection must answer with something; this one is ${t.toString()}', pos);
+		}
+	}
+
+	static function ToProjection(e:Expr, bound:Map<String, Int>, rows:Array<Type>):Expr {
+		return switch e.expr {
+			// A structure names each member; the names are what the columns come back as.
+			case EObjectDecl(fields):
+				final members = {
+					expr: EArrayDecl([
+						for (field in fields) {
+							final value = ToSqlExpression(field.expr, bound, rows);
+							macro new codequery.sqlexpressions.ProjectionMember($v{field.field}, $value);
+						}
+					]),
+					pos: e.pos
+				};
+				macro new codequery.sqlexpressions.ProjectionSqlExpression($members);
+
+			// A row on its own selects that row's columns.
+			case EConst(CIdent(name)) if (bound.exists(name)):
+				final source = ColumnsBuilder.Member(ColumnsBuilder.Of(rows[bound[name]], bound[name]), "Source");
+				macro new codequery.sqlexpressions.AllColumnsSqlExpression($source);
+
+			case _:
+				Context.error('A projection is a structure or a row, not ${e.toString()}', e.pos);
+		}
+	}
+
+	/**
+		Convert an aggregate projection — `a -> {rows: a.count(), biggest: a.max(r -> r.quantity)}`.
+
+		The lambda's first parameter is the set of aggregates over the query's rows; a window the
+		query has defined arrives as a further parameter, and an aggregate reads over it with
+		`.over(w)`.
+	**/
+	public static function ConvertAggregation(projection:Expr, rows:Array<Type>, query:Expr):{selection:Expr, row:Type} {
+		final fn = switch projection.expr {
+			case EFunction(_, f): f;
+			case _: Context.error("Expected an aggregate projection, e.g. a -> {rows: a.count()}", projection.pos);
+		}
+
+		// The aggregates stand in for the rows themselves, so the parameters are the set, then one
+		// per window the query has picked up.
+		final windows = rows.length - 1;
+		if (fn.args.length != 1 + windows) {
+			Context.error('Expected an aggregate projection taking ${1 + windows} parameter${windows == 0 ? "" : "s"}',
+				projection.pos);
+		}
+
+		TypeAggregation(fn, rows, projection.pos);
+
+		final bound = new Map<String, Int>();
+		bound.set(fn.args[0].name, 0);
+		final named = [for (index in 0...windows) fn.args[index + 1].name => index + 1];
+
+		final members = switch Unwrap(fn.expr).expr {
+			case EObjectDecl(fields): fields;
+			case e: Context.error('An aggregate projection is a structure, not ${Unwrap(fn.expr).toString()}',
+					projection.pos);
+		}
+
+		final built = {
+			expr: EArrayDecl([
+				for (field in members) {
+					final value = ToAggregate(field.expr, fn.args[0].name, named, rows, query);
+					macro new codequery.sqlexpressions.ProjectionMember($v{field.field}, $value);
+				}
+			]),
+			pos: projection.pos
+		};
+
+		return {
+			selection: macro new codequery.sqlexpressions.ProjectionSqlExpression($built),
+			row: ProjectedRow(fn, AggregationRows(rows), projection.pos)
+		};
+	}
+
+	/** The parameter types an aggregate projection is typed against. */
+	static function AggregationRows(rows:Array<Type>):Array<Type> {
+		final set = Context.getType("codequery.IAggregateSet");
+		final window = Context.getType("codequery.INamedWindow");
+		final typed = [switch set {
+			case TInst(t, _): TInst(t, [rows[0]]);
+			case t: t;
+		}];
+		for (_ in 1...rows.length) {
+			typed.push(window);
+		}
+		return typed;
+	}
+
+	static function TypeAggregation(fn:Function, rows:Array<Type>, pos:Position):Void {
+		final signature = ComplexType.TFunction([for (row in AggregationRows(rows)) row.toComplexType()], macro :Dynamic);
+		final lambda = {expr: EFunction(FAnonymous, fn), pos: pos};
+		Context.typeExpr(macro @:pos(pos) ($lambda : $signature));
+	}
+
+	/** One member of an aggregate projection: a call on the aggregate set, perhaps over a window. */
+	static function ToAggregate(e:Expr, set:String, windows:Map<String, Int>, rows:Array<Type>, query:Expr):Expr {
+		final e = Unwrap(e);
+		return switch e.expr {
+			// `<aggregate>.over(w)`
+			case ECall({expr: EField({expr: inner}, "over", _)}, [window]):
+				final named = switch Unwrap(window).expr {
+					case EConst(CIdent(name)) if (windows.exists(name)): windows[name];
+					case _: Context.error("over() takes a window this query has defined", window.pos);
+				}
+				final aggregate = ToAggregate({expr: inner, pos: e.pos}, set, windows, rows, query);
+				macro $aggregate.Over(${WindowAt(query, named)});
+
+			case ECall({expr: EField({expr: EConst(CIdent(name))}, fn, _)}, args) if (name == set):
+				Aggregate(fn, args, rows, e.pos);
+
+			case _:
+				Context.error('An aggregate projection selects aggregates, not ${e.toString()}', e.pos);
+		}
+	}
+
+	static function Aggregate(fn:String, args:Array<Expr>, rows:Array<Type>, pos:Position):Expr {
+		final row = [rows[0]];
+		final kind = macro $p{["codequery", "sqlexpressions", "AggregateType", AggregateNamed(fn, pos)]};
+
+		if (fn == "count") {
+			return macro new codequery.sqlexpressions.AggregateSqlExpression($kind);
+		}
+		final argument = ConvertKey(args[0], row);
+		final distinct = fn == "countDistinct";
+		return macro new codequery.sqlexpressions.AggregateSqlExpression($kind, $argument, $v{distinct});
+	}
+
+	static function AggregateNamed(fn:String, pos:Position):String {
+		return switch fn {
+			case "count" | "countDistinct": "Count";
+			case "sum": "Sum";
+			case "avg": "Avg";
+			case "min": "Min";
+			case "max": "Max";
+			case _: Context.error('$fn is not an aggregate', pos);
+		}
+	}
+
+	/** The window a statement holds at `index` among its sources, read back when the query runs. */
+	static function WindowAt(query:Expr, index:Int):Expr {
+		return macro codequery.queries.SelectQueryImpl.WindowOf($query, $v{index});
+	}
+
+	/**
+		Convert a window spec — `w -> w.PartitionBy(a -> a.deliveryId).OrderBy(a -> a.id)` — into
+		the partition keys and ordering terms it describes. The statement names it; a name is not
+		something the spec carries.
+	**/
+	public static function ConvertWindow(spec:Expr, rows:Array<Type>):{partitionBy:Expr, orderBy:Expr} {
+		final fn = switch spec.expr {
+			case EFunction(_, f) if (f.args.length == 1): f;
+			case _: Context.error("Expected a window spec, e.g. w -> w.PartitionBy(a -> a.id)", spec.pos);
+		}
+
+		final partitionBy:Array<Expr> = [];
+		final orderBy:Array<Expr> = [];
+		WalkWindow(Unwrap(fn.expr), fn.args[0].name, rows, partitionBy, orderBy);
+
+		return {
+			partitionBy: {expr: EArrayDecl(partitionBy), pos: spec.pos},
+			orderBy: {expr: EArrayDecl(orderBy), pos: spec.pos}
+		};
+	}
+
+	/** The chain is read from the outside in, so the terms are collected in the order written. */
+	static function WalkWindow(e:Expr, spec:String, rows:Array<Type>, partitionBy:Array<Expr>, orderBy:Array<Expr>):Void {
+		switch Unwrap(e).expr {
+			case EConst(CIdent(name)) if (name == spec):
+				return;
+
+			case ECall({expr: EField(owner, call, _)}, args):
+				WalkWindow(owner, spec, rows, partitionBy, orderBy);
+				final key = ConvertKey(args[0], rows);
+				switch call {
+					case "PartitionBy":
+						partitionBy.push(key);
+					case "OrderBy" | "OrderByDesc":
+						final ascending = call == "OrderBy";
+						final nulls = args.length > 1
+							? args[1]
+							: macro codequery.sqlexpressions.NullsOrdering.Default;
+						orderBy.push(macro new codequery.sqlexpressions.OrderByExpression($key, $v{ascending}, $nulls));
+					case _:
+						Context.error('A window is partitioned and ordered; $call is neither', e.pos);
+				}
+
+			case _:
+				Context.error('Expected a window spec built on "$spec", not ${e.toString()}', e.pos);
+		}
+	}
+
 	/** Whether an optional macro argument was left out at the call site. */
 	public static function Omitted(arg:Null<Expr>):Bool {
 		return arg == null || arg.expr.match(EConst(CIdent("null")));
@@ -206,6 +440,11 @@ class ExpressionConverter {
 		}
 
 		return Answering(joined, rows);
+	}
+
+	/** The row a window arrives as. */
+	public static function WindowRow():Type {
+		return Context.getType("codequery.INamedWindow");
 	}
 
 	/** As many rows as C# has an `ISelectQuery` for. */

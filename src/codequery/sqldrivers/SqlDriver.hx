@@ -1,15 +1,19 @@
 package codequery.sqldrivers;
 
 import codequery.sqlexpressions.AggregateSqlExpression;
+import codequery.sqlexpressions.AllColumnsSqlExpression;
 import codequery.sqlexpressions.BinarySqlExpression;
 import codequery.sqlexpressions.ColumnSqlExpression;
 import codequery.sqlexpressions.ConstSqlExpression;
+import codequery.sqlexpressions.ExistsSqlExpression;
 import codequery.sqlexpressions.ISqlExpression;
 import codequery.sqlexpressions.ISqlSource;
 import codequery.sqlexpressions.JoinSqlExpression;
 import codequery.sqlexpressions.JoinType;
+import codequery.sqlexpressions.NamedWindowSqlSource;
 import codequery.sqlexpressions.OrderByExpression;
 import codequery.sqlexpressions.ParameterSqlSource;
+import codequery.sqlexpressions.ProjectionSqlExpression;
 import codequery.sqlexpressions.QuerySqlSource;
 import codequery.sqlexpressions.SelectExpression;
 import codequery.sqlexpressions.SqlBinaryOperator;
@@ -33,7 +37,13 @@ class SqlDriver {
 		// Each statement renders against its own sources; a subquery restores the outer ones after.
 		final outer = sources;
 		sources = expression.AllSources();
+		final sql = Statement(expression);
+		sources = outer;
+		return sql;
+	}
 
+	/** The statement itself, rendered against whichever sources are in scope. */
+	function Statement(expression:SelectExpression):String {
 		var sql = 'SELECT${Distinct(expression)} ${Selection(expression)} FROM ${Source(expression.Source)}';
 		for (join in expression.Joins) {
 			sql += " " + Join(join);
@@ -41,12 +51,19 @@ class SqlDriver {
 		if (expression.Where != null) {
 			sql += ' WHERE ${RenderExpression(expression.Where)}';
 		}
+		if (expression.GroupBy.length > 0) {
+			sql += ' GROUP BY ${expression.GroupBy.map(RenderExpression).join(", ")}';
+		}
+		if (expression.Having != null) {
+			sql += ' HAVING ${RenderExpression(expression.Having)}';
+		}
+		if (expression.Windows.length > 0) {
+			sql += ' WINDOW ${expression.Windows.map(RenderWindowDefinition).join(", ")}';
+		}
 		if (expression.OrderBy.length > 0) {
 			sql += ' ORDER BY ${expression.OrderBy.map(RenderOrderBy).join(", ")}';
 		}
 		sql += RowLimit(expression);
-
-		sources = outer;
 		return sql;
 	}
 
@@ -55,6 +72,11 @@ class SqlDriver {
 	}
 
 	function Source(source:ISqlSource):String {
+		final window = Std.downcast(cast source, NamedWindowSqlSource);
+		if (window != null) {
+			throw "A window is named by the aggregates reading it, not selected from";
+		}
+
 		final table = Std.downcast(cast source, TableSqlSource);
 		if (table != null) {
 			return '${table.Table} AS ${table.Alias}';
@@ -151,12 +173,59 @@ class SqlDriver {
 
 		final aggregate = Std.downcast(cast e, AggregateSqlExpression);
 		if (aggregate != null) {
-			return switch aggregate.Function {
-				case CountRows: "COUNT(*)";
-			}
+			return RenderAggregate(aggregate);
+		}
+
+		final all = Std.downcast(cast e, AllColumnsSqlExpression);
+		if (all != null) {
+			return '${AliasOf(all.Source)}.*';
+		}
+
+		final projection = Std.downcast(cast e, ProjectionSqlExpression);
+		if (projection != null) {
+			return projection.Members
+				.map(member -> '${RenderExpression(member.Expression)} AS ${member.Name}')
+				.join(", ");
+		}
+
+		final exists = Std.downcast(cast e, ExistsSqlExpression);
+		if (exists != null) {
+			// Correlated: the subquery can name the outer statement's rows, so its sources are
+			// added to them rather than replacing them.
+			final outer = sources;
+			sources = sources.concat(exists.Subquery.AllSources());
+			final sql = '${exists.Negate ? "NOT EXISTS" : "EXISTS"} (${Statement(exists.Subquery)})';
+			sources = outer;
+			return sql;
 		}
 
 		throw 'Cannot render ${Type.getClassName(Type.getClass(e))}';
+	}
+
+	function RenderAggregate(aggregate:AggregateSqlExpression):String {
+		final name = switch aggregate.Type {
+			case Count: "COUNT";
+			case Sum: "SUM";
+			case Avg: "AVG";
+			case Min: "MIN";
+			case Max: "MAX";
+		}
+		final distinct = aggregate.Distinct ? "DISTINCT " : "";
+		// COUNT with nothing to count counts rows.
+		final argument = aggregate.Argument == null ? "*" : RenderExpression(aggregate.Argument);
+		final sql = '$name($distinct$argument)';
+		return aggregate.Window == null ? sql : '$sql OVER ${aggregate.Window.Name}';
+	}
+
+	function RenderWindowDefinition(window:NamedWindowSqlSource):String {
+		final parts = [];
+		if (window.PartitionBy.length > 0) {
+			parts.push('PARTITION BY ${window.PartitionBy.map(RenderExpression).join(", ")}');
+		}
+		if (window.OrderBy.length > 0) {
+			parts.push('ORDER BY ${window.OrderBy.map(RenderOrderBy).join(", ")}');
+		}
+		return '${window.Name} AS (${parts.join(" ")})';
 	}
 
 	/**

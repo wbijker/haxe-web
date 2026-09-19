@@ -84,6 +84,84 @@ class SelectQueryExtensions {
 	}
 
 	/**
+		`SELECT <projection>` — what the query answers with, and with it the row type it carries:
+		`a -> {store: a.fromStoreId, note: a.noteNo}`.
+	**/
+	public static macro function Select(self:Expr, projection:Expr):Expr {
+		return Projected(self, projection);
+	}
+
+	/**
+		`SELECT <projection>`, narrowing a query over several rows to one shape — most often a row
+		of its own, `(a, b) -> b`.
+	**/
+	public static macro function Reduce(self:Expr, reduce:Expr):Expr {
+		return Projected(self, reduce);
+	}
+
+	/**
+		`SELECT <aggregates>` — `a -> {rows: a.count(), biggest: a.max(r -> r.quantity)}`, where `a`
+		stands for the aggregates of the query's rows. A window the query has defined arrives as a
+		further parameter, and an aggregate reads over it with `.over(w)`.
+	**/
+	public static macro function SelectAggregation(self:Expr, projection:Expr):Expr {
+		final rows = ExpressionConverter.EntitiesOf(self);
+		final aggregated = ExpressionConverter.ConvertAggregation(projection, rows, Impl(self));
+		final selection = aggregated.selection;
+		return ExpressionConverter.Answering(macro ${Impl(self)}.SelectProjection($selection), [aggregated.row]);
+	}
+
+	/** `GROUP BY key`. Called again, it adds another term. */
+	public static macro function GroupBy(self:Expr, keySelector:Expr):Expr {
+		final rows = ExpressionConverter.EntitiesOf(self);
+		final key = ExpressionConverter.ConvertKey(keySelector, rows);
+		return ExpressionConverter.Answering(macro ${Impl(self)}.GroupByKey($key), rows);
+	}
+
+	/** `HAVING <predicate>` — the condition on the groups, as `Where` is the condition on the rows. */
+	public static macro function Having(self:Expr, predicate:Expr):Expr {
+		final rows = ExpressionConverter.EntitiesOf(self);
+		final condition = ExpressionConverter.Convert(predicate, rows);
+		return ExpressionConverter.Answering(macro ${Impl(self)}.HavingCondition($condition), rows);
+	}
+
+	/**
+		`WINDOW w AS (…)` — defines a window the query's aggregates can name:
+
+		```haxe
+		.Window(w -> w.PartitionBy(a -> a.deliveryId).OrderBy(a -> a.id))
+		.SelectAggregation((a, w) -> {running: a.sum(r -> r.quantity).over(w)})
+		```
+
+		It arrives as an extra row, which is how the projection after it names the window. Without a
+		`name` the first window is `w`.
+	**/
+	public static macro function Window(self:Expr, spec:Expr, ?name:Expr):Expr {
+		final rows = ExpressionConverter.EntitiesOf(self);
+		final window = ExpressionConverter.ConvertWindow(spec, rows);
+		final partitionBy = window.partitionBy;
+		final orderBy = window.orderBy;
+
+		final defined = ExpressionConverter.Omitted(name)
+			? macro ${Impl(self)}.AddWindow($partitionBy, $orderBy)
+			: macro ${Impl(self)}.AddWindow($partitionBy, $orderBy, $name);
+		return ExpressionConverter.Answering(defined, rows.concat([ExpressionConverter.WindowRow()]));
+	}
+
+	/**
+		`WHERE EXISTS (SELECT * FROM <table> WHERE <correlation>)`. The correlation is written over
+		the query's rows and the table's, e.g. `(d, l) -> l.deliveryId == d.id`.
+	**/
+	public static macro function WhereExists(self:Expr, table:Expr, correlation:Expr):Expr {
+		return Existing(self, table, correlation, false);
+	}
+
+	/** `WHERE NOT EXISTS (…)`. */
+	public static macro function WhereNotExists(self:Expr, table:Expr, correlation:Expr):Expr {
+		return Existing(self, table, correlation, true);
+	}
+
+	/**
 		`INNER JOIN <source> ON <on>`. The source is a table or another query, and the condition is
 		written over every row the query now has: `(a, b, c) -> …` after two joins.
 	**/
@@ -121,6 +199,21 @@ class SelectQueryExtensions {
 			? macro ${Impl(self)}.OrderByKey($key, $v{ascending})
 			: macro ${Impl(self)}.OrderByKey($key, $v{ascending}, $nulls);
 		return ExpressionConverter.Answering(ordered, rows);
+	}
+
+	static function Existing(self:Expr, table:Expr, correlation:Expr, negate:Bool):Expr {
+		final rows = ExpressionConverter.EntitiesOf(self);
+		// The correlation names the table's rows after the query's own, so the subquery's source is
+		// one past them.
+		final condition = ExpressionConverter.Convert(correlation, rows.concat([ExpressionConverter.EntityOf(table)]));
+		return ExpressionConverter.Answering(macro ${Impl(self)}.WhereExistsTable($table, $condition, $v{negate}), rows);
+	}
+
+	static function Projected(self:Expr, projection:Expr):Expr {
+		final projected = ExpressionConverter.ConvertProjection(projection, ExpressionConverter.EntitiesOf(self));
+		final selection = projected.selection;
+		// A projection collapses however many rows the query had to the one shape it answers with.
+		return ExpressionConverter.Answering(macro ${Impl(self)}.SelectProjection($selection), [projected.row]);
 	}
 
 	/** The statement underneath, which is where a clause is actually added. */

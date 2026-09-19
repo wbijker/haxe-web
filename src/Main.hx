@@ -63,6 +63,42 @@ class Main {
 		Sys.println(driver.ToSql(db.Deliveries.From().Distinct(a -> a.fromStoreId).CountExpression()));
 		Sys.println(driver.ToSql(db.Deliveries.From().Limit(10).CountExpression()));
 
+		// Projection: a structure names each member, and the query carries that shape from here on.
+		Sys.println("");
+		Sys.println(driver.ToSql(db.Deliveries.From()
+			.Where(a -> a.status == 6)
+			.Select(a -> {store: a.fromStoreId, note: a.noteNo})
+			.ToExpression()));
+
+		// Reduce: naming a row selects that row's columns and keeps its type.
+		Sys.println(driver.ToSql(db.Deliveries.From()
+			.InnerJoin(db.Lines, (d, l) -> d.id == l.deliveryId)
+			.Reduce((d, l) -> l)
+			.ToExpression()));
+
+		// GROUP BY, with the aggregates of each group.
+		Sys.println(driver.ToSql(db.Lines.From()
+			.GroupBy(a -> a.deliveryId)
+			.Having(a -> a.quantity > 0)
+			.SelectAggregation(a -> {lines: a.count(), units: a.sum(r -> r.quantity), kinds: a.countDistinct(r -> r.itemCode)})
+			.ToExpression()));
+
+		// A window arrives as an extra row, which is how the projection names it.
+		Sys.println(driver.ToSql(db.Lines.From()
+			.Window(w -> w.PartitionBy(a -> a.deliveryId).OrderBy(a -> a.id))
+			.SelectAggregation((a, w) -> {running: a.sum(r -> r.quantity).over(w)})
+			.ToExpression()));
+
+		// EXISTS, correlated with the outer row.
+		Sys.println(driver.ToSql(db.Deliveries.From()
+			.WhereExists(db.Lines, (d, l) -> l.deliveryId == d.id && l.quantity > 0)
+			.ToExpression()));
+
+		Sys.println(driver.ToSql(db.Deliveries.From()
+			.WhereNotExists(db.Lines, (d, l) -> l.deliveryId == d.id)
+			.ToExpression()));
+
+		Sys.println("");
 		try {
 			db.Deliveries.From().Count();
 		} catch (e:String) {

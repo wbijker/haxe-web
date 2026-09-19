@@ -16,6 +16,13 @@ class SelectExpression {
 
 	public var Where:Null<ISqlExpression>;
 
+	public final GroupBy:Array<ISqlExpression> = [];
+
+	public var Having:Null<ISqlExpression>;
+
+	/** Windows defined on this statement, which its aggregates read over by name. */
+	public final Windows:Array<NamedWindowSqlSource> = [];
+
 	public var IsDistinct:Bool = false;
 
 	/** `DISTINCT ON (…)` — one row per distinct key, the first in the query's own ordering. */
@@ -32,11 +39,17 @@ class SelectExpression {
 		this.Source = source;
 	}
 
-	/** Every source the statement names, in the order a lambda's parameters bind to them. */
+	/**
+		Every source the statement names, in the order a lambda's parameters bind to them. A window
+		is one of them: `Window` hands the projection after it an extra parameter to name it by.
+	**/
 	public function AllSources():Array<ISqlSource> {
-		final sources = [Source];
+		final sources:Array<ISqlSource> = [Source];
 		for (join in Joins) {
 			sources.push(join.Source);
+		}
+		for (window in Windows) {
+			sources.push(window);
 		}
 		return sources;
 	}
@@ -49,6 +62,13 @@ class SelectExpression {
 		}
 		copy.Selection = Selection;
 		copy.Where = Where;
+		for (key in GroupBy) {
+			copy.GroupBy.push(key);
+		}
+		copy.Having = Having;
+		for (window in Windows) {
+			copy.Windows.push(window);
+		}
 		copy.IsDistinct = IsDistinct;
 		for (key in DistinctOn) {
 			copy.DistinctOn.push(key);

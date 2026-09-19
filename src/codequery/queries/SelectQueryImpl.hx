@@ -4,7 +4,9 @@ import codequery.sqlexpressions.BinarySqlExpression;
 import codequery.sqlexpressions.ISqlExpression;
 import codequery.sqlexpressions.ISqlSource;
 import codequery.sqlexpressions.JoinSqlExpression;
+import codequery.sqlexpressions.ExistsSqlExpression;
 import codequery.sqlexpressions.JoinType;
+import codequery.sqlexpressions.NamedWindowSqlSource;
 import codequery.sqlexpressions.NullsOrdering;
 import codequery.sqlexpressions.OrderByExpression;
 import codequery.sqlexpressions.SelectExpression;
@@ -42,9 +44,63 @@ class SelectQueryImpl {
 	}
 
 	public function WhereCondition(condition:ISqlExpression):SelectQueryImpl {
-		return Fork(expression -> expression.Where = expression.Where == null
+		return Fork(expression -> AndWhere(expression, condition));
+	}
+
+	/** Successive conditions accumulate, as they do in the C# original. */
+	static function AndWhere(expression:SelectExpression, condition:ISqlExpression):Void {
+		expression.Where = expression.Where == null
 			? condition
-			: new BinarySqlExpression(expression.Where, SqlBinaryOperator.And, condition));
+			: new BinarySqlExpression(expression.Where, SqlBinaryOperator.And, condition);
+	}
+
+	public function GroupByKey(key:ISqlExpression):SelectQueryImpl {
+		return Fork(expression -> expression.GroupBy.push(key));
+	}
+
+	public function HavingCondition(condition:ISqlExpression):SelectQueryImpl {
+		return Fork(expression -> expression.Having = expression.Having == null
+			? condition
+			: new BinarySqlExpression(expression.Having, SqlBinaryOperator.And, condition));
+	}
+
+	/**
+		Defines a window on the statement. Unnamed, the first is `w` and the rest follow it — which
+		is why naming happens here rather than where the spec was written: only the statement knows
+		how many it already has.
+	**/
+	public function AddWindow(partitionBy:Array<ISqlExpression>, orderBy:Array<OrderByExpression>, ?name:String):SelectQueryImpl {
+		return Fork(expression -> {
+			final given = name != null ? name : (expression.Windows.length == 0 ? "w" : "w" + expression.Windows.length);
+			expression.Windows.push(new NamedWindowSqlSource(given, partitionBy, orderBy));
+		});
+	}
+
+	/** The window among a statement's sources at `index`, which is how a projection names one. */
+	public static function WindowOf(query:SelectQueryImpl, index:Int):NamedWindowSqlSource {
+		final source = query.SelectExpression.AllSources()[index];
+		final window = Std.downcast(cast source, NamedWindowSqlSource);
+		if (window == null) {
+			throw 'Row $index of this query is not a window';
+		}
+		return window;
+	}
+
+	/**
+		`WHERE EXISTS (SELECT * FROM <table> WHERE <correlation>)`.
+
+		The subquery's source is drawn from this statement's own context, so its alias cannot
+		collide with one the outer statement is already using — which is what lets the correlation
+		name rows on both sides.
+	**/
+	public function WhereExistsTable(table:IQueryTable, correlation:ISqlExpression, negate:Bool):SelectQueryImpl {
+		final context = this.context.Fork();
+		final subquery = new SelectExpression(context.AddTableSource(table.Table));
+		subquery.Where = correlation;
+
+		final expression = SelectExpression.Fork();
+		AndWhere(expression, new ExistsSqlExpression(subquery, negate));
+		return new SelectQueryImpl(expression, context);
 	}
 
 	public function DistinctRows():SelectQueryImpl {
@@ -85,6 +141,10 @@ class SelectQueryImpl {
 
 	public function AsPercent():SelectQueryImpl {
 		return Fork(expression -> expression.Percent = true);
+	}
+
+	public function SelectProjection(selection:ISqlExpression):SelectQueryImpl {
+		return Fork(expression -> expression.Selection = selection);
 	}
 
 	public function JoinTable(type:JoinType, table:IQueryTable, ?on:ISqlExpression):SelectQueryImpl {
