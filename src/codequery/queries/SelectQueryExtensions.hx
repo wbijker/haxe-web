@@ -146,6 +146,71 @@ class SelectQueryExtensions {
 		return ExpressionConverter.SetOperation(self, other, "Except");
 	}
 
+	/** `INTERSECT ALL` — the rows in both, duplicates kept. */
+	public static macro function IntersectAll(self:Expr, other:Expr):Expr {
+		return ExpressionConverter.SetOperation(self, other, "IntersectAll");
+	}
+
+	/** `EXCEPT ALL` — the rows of this one that are not in the other, duplicates kept. */
+	public static macro function ExceptAll(self:Expr, other:Expr):Expr {
+		return ExpressionConverter.SetOperation(self, other, "ExceptAll");
+	}
+
+	/**
+		Marks the query as a CTE: a query selecting from it hoists it into a `WITH` clause and reads
+		it by name — `cte1`, `cte2` … in dependency order, or the name given here.
+	**/
+	public static macro function AsCte(self:Expr, ?name:Expr):Expr {
+		final rows = ExpressionConverter.EntitiesOf(self);
+		final marked = ExpressionConverter.Omitted(name)
+			? macro ${Impl(self)}.MarkCte()
+			: macro ${Impl(self)}.MarkCte($name);
+		return ExpressionConverter.Answering(marked, rows);
+	}
+
+	/**
+		`WITH RECURSIVE name AS (<this> UNION ALL <member>) SELECT … FROM name` — this query is the
+		anchor, and the member is written against the CTE itself, handed in by name:
+		`.Recursive("org", org -> Query.select(Employee).InnerJoin(org, (e, parent) -> …))`.
+	**/
+	public static macro function Recursive(self:Expr, name:Expr, member:Expr):Expr {
+		final rows = ExpressionConverter.EntitiesOf(self);
+		final recursive = ExpressionConverter.RecursiveMember(member, name, rows);
+		return ExpressionConverter.Answering(macro ${Impl(self)}.RecursiveWith($name, $recursive), rows);
+	}
+
+	/**
+		`-- above` before the statement and `-- below` after it, for whoever finds the SQL in a log
+		or a plan, where the code that built it is nowhere to be seen.
+	**/
+	public static macro function WithComments(self:Expr, above:Expr, ?below:Expr):Expr {
+		final rows = ExpressionConverter.EntitiesOf(self);
+		final commented = ExpressionConverter.Omitted(below)
+			? macro ${Impl(self)}.Commented($above)
+			: macro ${Impl(self)}.Commented($above, $below);
+		return ExpressionConverter.Answering(commented, rows);
+	}
+
+	/** `FOR NO KEY UPDATE` — locks the rows against change, but not against a row referring to them. */
+	public static macro function ForNoKeyUpdate(self:Expr):Expr {
+		final rows = ExpressionConverter.EntitiesOf(self);
+		return ExpressionConverter.Answering(
+			macro ${Impl(self)}.Locking(codequery.sqlexpressions.RowLockMode.NoKeyUpdate), rows);
+	}
+
+	/** `FOR KEY SHARE` — the weakest lock: only the key may not change. */
+	public static macro function ForKeyShare(self:Expr):Expr {
+		final rows = ExpressionConverter.EntitiesOf(self);
+		return ExpressionConverter.Answering(
+			macro ${Impl(self)}.Locking(codequery.sqlexpressions.RowLockMode.KeyShare), rows);
+	}
+
+	/** `FOR UPDATE OF <table>` — locks only the rows of that table, of all the query reads. */
+	public static macro function OfTable(self:Expr, table:Expr):Expr {
+		final rows = ExpressionConverter.EntitiesOf(self);
+		return ExpressionConverter.Answering(macro ${Impl(self)}.LockOf($table), rows);
+	}
+
 	/** `GROUP BY ROLLUP (…)` — the groups, and the totals down to the grand total. */
 	public static macro function GroupByRollup(self:Expr, keySelector:Expr):Expr {
 		return Grouped(self, keySelector, "Rollup");
@@ -198,32 +263,39 @@ class SelectQueryExtensions {
 			macro ${Impl(self)}.Locking(codequery.sqlexpressions.RowLockMode.Share), rows);
 	}
 
-	/** `SKIP LOCKED` — rows someone else holds are passed over rather than waited for. */
+	/** `SKIP LOCKED` — rows someone else holds are passed over rather than waited for. Needs a lock taken. */
 	public static macro function SkipLocked(self:Expr):Expr {
 		final rows = ExpressionConverter.EntitiesOf(self);
-		return ExpressionConverter.Answering(
-			macro ${Impl(self)}.Locking(codequery.sqlexpressions.RowLockMode.Update, true), rows);
+		return ExpressionConverter.Answering(macro ${Impl(self)}.Waiting(true), rows);
 	}
 
-	/** `NOWAIT` — a row someone else holds is an error rather than a wait. */
+	/** `NOWAIT` — a row someone else holds is an error rather than a wait. Needs a lock taken. */
 	public static macro function NoWait(self:Expr):Expr {
 		final rows = ExpressionConverter.EntitiesOf(self);
-		return ExpressionConverter.Answering(
-			macro ${Impl(self)}.Locking(codequery.sqlexpressions.RowLockMode.Update, false, true), rows);
+		return ExpressionConverter.Answering(macro ${Impl(self)}.Waiting(false), rows);
 	}
 
-	/** `GROUP BY key`. Called again, it adds another term. */
+	/**
+		`GROUP BY key`, or several at once as a structure — `r -> {a: r.unitId, b: r.guestId}`.
+		Called again, it adds another term.
+	**/
 	public static macro function GroupBy(self:Expr, keySelector:Expr):Expr {
 		final rows = ExpressionConverter.EntitiesOf(self);
-		final key = ExpressionConverter.ConvertKey(keySelector, rows);
-		return ExpressionConverter.Answering(macro ${Impl(self)}.GroupByKey($key), rows);
+		final keys = ExpressionConverter.ConvertKeySet(keySelector, rows);
+		return ExpressionConverter.Answering(macro ${Impl(self)}.GroupByKeys($keys), rows);
 	}
 
-	/** `HAVING <predicate>` — the condition on the groups, as `Where` is the condition on the rows. */
+	/**
+		`HAVING <predicate>` — the condition on the groups, written over their aggregates as
+		`SelectAggregation` is: `a -> a.count() > 5`, `a -> a.key(r -> r.unitId) > 0`.
+	**/
 	public static macro function Having(self:Expr, predicate:Expr):Expr {
 		final rows = ExpressionConverter.EntitiesOf(self);
-		final condition = ExpressionConverter.Convert(predicate, rows);
-		return ExpressionConverter.Answering(macro ${Impl(self)}.HavingCondition($condition), rows);
+		final condition = ExpressionConverter.ConvertAggregatePredicate(predicate, rows, macro __query);
+		return ExpressionConverter.Answering(macro {
+			final __query = ${Impl(self)};
+			__query.HavingCondition($condition);
+		}, rows);
 	}
 
 	/**
@@ -266,23 +338,27 @@ class SelectQueryExtensions {
 	/**
 		`INNER JOIN <source> ON <on>`. The source is a table or another query, and the condition is
 		written over every row the query now has: `(a, b, c) -> …` after two joins.
+
+		Or, with no condition, a relationship the entity declares — `.InnerJoin(Booking.WithUnit)`,
+		where `WithUnit` answers with `(b:Booking, u:Unit) -> u.id == b.unitId`: the table joined is
+		the unit's, and the condition is the relationship's.
 	**/
-	public static macro function InnerJoin(self:Expr, source:Expr, on:Expr, ?reduce:Expr):Expr {
+	public static macro function InnerJoin(self:Expr, source:Expr, ?on:Expr, ?reduce:Expr):Expr {
 		return ExpressionConverter.Join(self, source, on, "Inner", reduce);
 	}
 
-	/** `LEFT JOIN <source> ON <on>`. */
-	public static macro function LeftJoin(self:Expr, source:Expr, on:Expr, ?reduce:Expr):Expr {
+	/** `LEFT JOIN <source> ON <on>`, or a relationship. */
+	public static macro function LeftJoin(self:Expr, source:Expr, ?on:Expr, ?reduce:Expr):Expr {
 		return ExpressionConverter.Join(self, source, on, "Left", reduce);
 	}
 
-	/** `RIGHT JOIN <source> ON <on>`. */
-	public static macro function RightJoin(self:Expr, source:Expr, on:Expr, ?reduce:Expr):Expr {
+	/** `RIGHT JOIN <source> ON <on>`, or a relationship. */
+	public static macro function RightJoin(self:Expr, source:Expr, ?on:Expr, ?reduce:Expr):Expr {
 		return ExpressionConverter.Join(self, source, on, "Right", reduce);
 	}
 
-	/** `FULL OUTER JOIN <source> ON <on>`. */
-	public static macro function OuterJoin(self:Expr, source:Expr, on:Expr, ?reduce:Expr):Expr {
+	/** `FULL OUTER JOIN <source> ON <on>`, or a relationship. */
+	public static macro function OuterJoin(self:Expr, source:Expr, ?on:Expr, ?reduce:Expr):Expr {
 		return ExpressionConverter.Join(self, source, on, "Outer", reduce);
 	}
 
@@ -329,9 +405,9 @@ class SelectQueryExtensions {
 
 	static function Grouped(self:Expr, keySelector:Expr, mode:String):Expr {
 		final rows = ExpressionConverter.EntitiesOf(self);
-		final key = ExpressionConverter.ConvertKey(keySelector, rows);
+		final keys = ExpressionConverter.ConvertKeySet(keySelector, rows);
 		final grouping = macro $p{["codequery", "sqlexpressions", "GroupingMode", mode]};
-		return ExpressionConverter.Answering(macro ${Impl(self)}.GroupByKey($key, $grouping), rows);
+		return ExpressionConverter.Answering(macro ${Impl(self)}.GroupByKeys($keys, $grouping), rows);
 	}
 
 	static function Existing(self:Expr, table:Expr, correlation:Expr, negate:Bool):Expr {

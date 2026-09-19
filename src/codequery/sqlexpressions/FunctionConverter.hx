@@ -202,8 +202,8 @@ class FunctionConverter {
 
 	/**
 		A name that is neither a row nor a literal: a local of an inline function being expanded,
-		which is bound beside the statement; a variable captured from around the lambda, which is the
-		value it holds; a span, which is an interval.
+		which is bound beside the statement; a variable captured from around the lambda, which is
+		bound beside it too; a span, which is an interval.
 	**/
 	static function Identifier(e:Expr, name:String):Null<Expr> {
 		var frame = inlineLocals.length - 1;
@@ -221,10 +221,12 @@ class FunctionConverter {
 		if (IsIntervalType(typed.t)) {
 			return macro codequery.sqlexpressions.Expr.interval($e);
 		}
+		// A captured local is sent beside the statement as a parameter, which is what C# does with
+		// a variable a lambda closes over; a static or a literal is written into it.
 		return switch typed.t.followWithAbstracts() {
 			case TAbstract(_.get() => {name: "Int" | "Float" | "Bool"}, _)
 				| TInst(_.get() => {name: "String" | "Date"}, _):
-				ExpressionConverter.ValuedAs(e, typed.t);
+				ExpressionConverter.ParameterisedAs(e, typed.t);
 			case _: null;
 		}
 	}

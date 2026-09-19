@@ -83,6 +83,8 @@ class SqlExpressionWalker {
 
 		final interval = Std.downcast(cast e, IntervalSqlExpression);
 		if (interval != null) return visitor.OnInterval(interval);
+		final commented = Std.downcast(cast e, SqlCommentExpression);
+		if (commented != null) return visitor.OnComment(commented);
 
 		throw 'No visitor case for ${Type.getClassName(Type.getClass(e))}';
 	}

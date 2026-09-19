@@ -29,10 +29,18 @@ class RowCount {
 	}
 
 	static function CountsWhatItReads(query:SelectExpression):Bool {
-		return !query.IsDistinct
+		return query.GroupBy.length == 0
+			&& query.GroupingSets.length == 0
+			&& query.Grouping == None
+			&& query.Having == null
+			&& !query.IsDistinct
 			&& query.DistinctOn.length == 0
 			&& query.Limit == null
-			&& query.Offset == null;
+			&& query.Offset == null
+			&& query.Unions.length == 0
+			&& query.Windows.length == 0
+			&& query.Lock == None
+			&& !query.IsCte;
 	}
 
 	/** Counting runs the query, and no driver can do that yet. */

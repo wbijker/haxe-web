@@ -24,6 +24,8 @@ import codequery.sqlexpressions.SelectExpression;
 import codequery.sqlexpressions.QuerySqlSource;
 import codequery.sqlexpressions.SourceContext;
 import codequery.sqlexpressions.SqlBinaryOperator;
+import codequery.sqlexpressions.QuerySqlSource;
+import codequery.sqlexpressions.TableSqlSource;
 
 /**
 	What every `ISelectQueryN` is, underneath: a statement being built up, and the sources it names.
@@ -52,31 +54,39 @@ class SelectQueryImpl {
 	}
 
 	/**
-		The statement, unwrapped where wrapping it added nothing.
+		The statement built so far.
 
-		A projection makes the statement it projected the source of a new one, so that what follows
-		can read the projected columns. Asked for as it stands, `SELECT * FROM (<projected>)` says no
-		more than the projected statement does, so that is what is answered — as the C# does. The
-		same wrapper carrying only DISTINCT, LIMIT or OFFSET folds them into the statement inside,
-		where they mean the same, so a projection followed by one of them is still one SELECT.
+		A projection wraps the statement it projects, so that what comes after it reads the
+		projected columns. Asked for as it stands, a wrapper with nothing of its own is the statement
+		it wraps; one carrying only the row rules — DISTINCT, LIMIT, OFFSET, a lock, a comment — has
+		them moved inside, since they name no columns, so a projection followed by one of them is
+		still one SELECT. They move only into a statement that has none of them already and no
+		union, or the two would compose and mean something else. A CTE is kept wrapped, so that it is
+		hoisted and read by name. This is what C# does.
 	**/
 	public function ToExpression():SelectExpression {
-		final inner = Std.downcast(cast SelectExpression.Source, QuerySqlSource);
-		if (inner == null) {
+		final wrapped = Std.downcast(cast SelectExpression.Source, QuerySqlSource);
+		if (wrapped == null || wrapped.Query.IsCte) {
 			return SelectExpression;
 		}
 		if (SelectExpression.IsSimpleWrapper) {
-			return inner.Query;
+			return wrapped.Query;
 		}
-		// Folded only into a statement that has none of them and no UNION: otherwise the two would
-		// compose — the first of the first ten — and folding would quietly mean something else.
-		final within = inner.Query;
-		if (SelectExpression.IsEmptyApartFromRowRules && !within.IsDistinct && within.DistinctOn.length == 0
-			&& within.Limit == null && within.Offset == null && within.Unions.length == 0) {
-			final folded = within.Fork();
+		if (SelectExpression.IsEmptyApartFromRowRules && !wrapped.Query.HasRowRules()
+			&& wrapped.Query.Unions.length == 0) {
+			// Forked rather than written on: the inner statement belongs to the query this one was
+			// projected from, which may still be used on its own.
+			final folded = wrapped.Query.Fork();
 			folded.IsDistinct = SelectExpression.IsDistinct;
 			folded.Limit = SelectExpression.Limit;
 			folded.Offset = SelectExpression.Offset;
+			folded.WithTies = SelectExpression.WithTies;
+			folded.Percent = SelectExpression.Percent;
+			folded.Lock = SelectExpression.Lock;
+			folded.LockSkipLocked = SelectExpression.LockSkipLocked;
+			folded.LockNoWait = SelectExpression.LockNoWait;
+			folded.CommentAbove = SelectExpression.CommentAbove;
+			folded.CommentBelow = SelectExpression.CommentBelow;
 			return folded;
 		}
 		return SelectExpression;
@@ -95,19 +105,81 @@ class SelectQueryImpl {
 	}
 
 	public function GroupByKey(key:ISqlExpression, mode:GroupingMode = None):SelectQueryImpl {
-		final key = context.Resolve(key);
-		return Fork(expression -> {
-			expression.GroupBy.push(key);
+		return GroupByKeys([context.Resolve(key)], mode);
+	}
+
+	/**
+		`GROUP BY` one or more keys — a composite key is several terms, as `ROLLUP (a, b)` takes them.
+
+		Normally on the statement being built. Not when that statement already dedupes —
+		`Select(…).Distinct().GroupBy(…)` — because SQL runs its DISTINCT after the grouping rather
+		than before it, and "the distinct pairs, counted" would become "count, then dedupe the
+		counts". So a deduping statement is put in a derived table and the grouping reads from that,
+		which is the order the two were written in. C#'s `GroupingScope`.
+	**/
+	public function GroupByKeys(keys:Array<ISqlExpression>, mode:GroupingMode = None):SelectQueryImpl {
+		return GroupingScope().Fork(expression -> {
+			for (key in keys) {
+				expression.GroupBy.push(key);
+			}
 			if (mode != None) {
 				expression.Grouping = mode;
 			}
 		});
 	}
 
+	/** The query a grouping is added to: this one, or a fresh one over it where this one dedupes. */
+	function GroupingScope():SelectQueryImpl {
+		if (!SelectExpression.IsDistinct && SelectExpression.DistinctOn.length == 0) {
+			return this;
+		}
+		final nested = new SourceContext();
+		return new SelectQueryImpl(new SelectExpression(nested.AddQuerySource(SelectExpression)), nested);
+	}
+
 	/** What `GroupByGroupingSets` compiles down to. */
 	public function GroupBySet(keys:Array<ISqlExpression>):SelectQueryImpl {
 		final keys = keys.map(context.Resolve);
-		return Fork(expression -> expression.GroupingSets.push(keys));
+		return Fork(expression -> {
+			expression.GroupingSets.push(keys);
+			expression.Grouping = GroupingSets;
+		});
+	}
+
+	/**
+		Marks the statement as a CTE. Not forked, and deliberately: this marks the statement other
+		queries already hold, so that one of them hoists it into a WITH clause. A copy would be
+		marked and never read.
+	**/
+	public function MarkCte(?name:String):SelectQueryImpl {
+		final body = ToExpression();
+		body.IsCte = true;
+		body.CteName = name;
+		return this;
+	}
+
+	/**
+		`WITH RECURSIVE name AS (<this> UNION ALL <member>)`. This query is the anchor; the member
+		was written against a table called `name`, which the WITH clause defines — so the reference
+		is a plain table read and there is no object cycle.
+	**/
+	public function RecursiveWith(name:String, member:SelectQueryImpl):SelectQueryImpl {
+		final anchor = ToExpression().Fork();
+		anchor.IsCte = true;
+		anchor.CteName = name;
+		anchor.IsRecursive = true;
+		anchor.Unions.push(new UnionSqlExpression(UnionAll, member.ToExpression()));
+
+		final context = new SourceContext();
+		return new SelectQueryImpl(new SelectExpression(context.AddQuerySource(anchor)), context);
+	}
+
+	/** `-- above` before the statement and `-- below` after it — `WithComments`. */
+	public function Commented(?above:String, ?below:String):SelectQueryImpl {
+		return Fork(expression -> {
+			expression.CommentAbove = above;
+			expression.CommentBelow = below;
+		});
 	}
 
 	/** What `With` compiles down to: a query named in front of this one. */
@@ -116,16 +188,71 @@ class SelectQueryImpl {
 			new CommonTableExpression(name, other.ToExpression(), recursive)));
 	}
 
-	/** What the locking clauses compile down to. */
-	public function Locking(mode:RowLockMode, skipLocked:Bool = false, noWait:Bool = false):SelectQueryImpl {
+	/** What the locking clauses compile down to. A second mode changes the lock rather than adding one. */
+	public function Locking(mode:RowLockMode, ?skipLocked:Bool, ?noWait:Bool):SelectQueryImpl {
 		return Fork(expression -> {
 			expression.Lock = mode;
-			expression.LockSkipLocked = skipLocked;
-			expression.LockNoWait = noWait;
+			if (skipLocked != null) {
+				expression.LockSkipLocked = skipLocked;
+			}
+			if (noWait != null) {
+				expression.LockNoWait = noWait;
+			}
 		});
 	}
 
-	/** What the set operations compile down to. */
+	/**
+		`SKIP LOCKED` or `NOWAIT` — one or the other, the last said. Either says something about a
+		lock, so a query that has not taken one is told rather than the call quietly doing nothing.
+	**/
+	public function Waiting(skip:Bool):SelectQueryImpl {
+		return Fork(expression -> {
+			if (expression.Lock == None) {
+				throw NoLock(skip ? "SkipLocked" : "NoWait");
+			}
+			expression.LockSkipLocked = skip;
+			expression.LockNoWait = !skip;
+		});
+	}
+
+	/**
+		`FOR UPDATE OF <table>` — locks only the rows of that table. Without it the lock takes every
+		row the query touched, joined tables included. Called again, it names another table.
+	**/
+	public function LockOf(table:IQueryTable):SelectQueryImpl {
+		return Fork(expression -> {
+			if (expression.Lock == None) {
+				throw NoLock("OfTable");
+			}
+			final wanted = table.Table.Name;
+			var named:Null<ISqlSource> = null;
+			for (source in [expression.Source].concat(expression.Joins.map(join -> join.Source))) {
+				final read = Std.downcast(cast source, TableSqlSource);
+				if (read != null && read.Table.Name == wanted) {
+					named = read;
+					break;
+				}
+			}
+			if (named == null) {
+				throw 'This query does not select from \'$wanted\', so its lock cannot name it. '
+					+ 'FOR UPDATE OF names a table the statement reads.';
+			}
+			if (expression.LockTables.indexOf(named) < 0) {
+				expression.LockTables.push(named);
+			}
+		});
+	}
+
+	static function NoLock(called:String):String {
+		return '$called says something about a lock, and this query has not taken one. '
+			+ 'Take it first: ForUpdate(), ForNoKeyUpdate(), ForShare() or ForKeyShare().';
+	}
+
+	/**
+		What the set operations compile down to. The member is attached to the statement as it
+		stands and a fresh wrapper answered with, so that what is added afterwards — a WHERE, an
+		ORDER BY — acts on the combined rows rather than on the first member.
+	**/
 	public function UnionWith(type:SetOperationType, other:SelectQueryImpl):SelectQueryImpl {
 		// Attached to this query's unwrapped body, and a fresh wrapper answered — so whatever is
 		// applied afterwards acts on the combined result, not on the first member, as in C#.
@@ -250,14 +377,9 @@ class SelectQueryImpl {
 
 	public function JoinQuery(type:JoinType, source:SelectQueryImpl, ?on:ISqlExpression):SelectQueryImpl {
 		final context = this.context.Fork();
-		// A query that only reads a table is that table, and is joined as one rather than nested —
-		// which is how C# renders it.
-		final statement = source.ToExpression();
-		final table = Std.downcast(cast statement.Source, TableSqlSource);
-		if (table != null && statement.IsEmpty) {
-			return Joined(type, context.AddTableSource(table.Table), context.Resolve(on), context);
-		}
-		return Joined(type, context.AddQuerySource(statement), context.Resolve(on), context);
+		// Kept as the query it is, as C# keeps it; the translator renders a query that only reads a
+		// table as that table.
+		return Joined(type, context.AddQuerySource(source.ToExpression()), context.Resolve(on), context);
 	}
 
 	/**
@@ -307,6 +429,8 @@ class SelectQueryImpl {
 		is all this port can do until a driver can execute.
 	**/
 	public function CountExpression():SelectExpression {
+		// The statement as it stands, wrapper and all, as the C# does: a projection that aggregates
+		// returns one row however many it read, and one is what its wrapper counts.
 		return RowCount.Counting(SelectExpression, context);
 	}
 

@@ -35,4 +35,5 @@ interface ISqlExpressionVisitor<T> {
 	function OnDateOperation(e:DateOperationSqlExpression):T;
 	function OnDateFormat(e:DateFormatSqlExpression):T;
 	function OnInterval(e:IntervalSqlExpression):T;
+	function OnComment(e:SqlCommentExpression):T;
 }

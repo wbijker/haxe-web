@@ -53,9 +53,45 @@ class SelectExpression implements ISqlStatement {
 	public var WithTies:Bool = false;
 	public var Percent:Bool = false;
 
+	/** `FOR UPDATE OF …` — which of the statement's sources the lock names; none names them all. */
+	public final LockTables:Array<ISqlSource> = [];
+
+	/**
+		Marked as a `WITH` member: a statement selecting from this one hoists it into a WITH clause
+		and reads it by name, rather than inlining it as a subquery. `AsCte` sets it.
+	**/
+	public var IsCte:Bool = false;
+
+	/** The name the CTE is given, or null for one made up when it is rendered. */
+	public var CteName:Null<String>;
+
+	/** A recursive CTE: its first union member reads the CTE itself, by name. */
+	public var IsRecursive:Bool = false;
+
+	/** A line comment above the statement, and one below it — `WithComments`. */
+	public var CommentAbove:Null<String>;
+	public var CommentBelow:Null<String>;
+
 	public function new(source:ISqlSource) {
 		this.Source = source;
 	}
+
+
+	/** Whether any of the row rules `IsEmptyApartFromRowRules` leaves aside is set. */
+	public function HasRowRules():Bool {
+		return IsDistinct
+			|| DistinctOn.length > 0
+			|| Limit != null
+			|| Offset != null
+			|| WithTies
+			|| Percent
+			|| Lock != None
+			|| CommentAbove != null
+			|| CommentBelow != null;
+	}
+
+
+
 
 	/**
 		Every source the statement names, in the order a lambda's parameters bind to them. A window
@@ -135,6 +171,14 @@ class SelectExpression implements ISqlStatement {
 		copy.Offset = Offset;
 		copy.WithTies = WithTies;
 		copy.Percent = Percent;
+		for (table in LockTables) {
+			copy.LockTables.push(table);
+		}
+		copy.IsCte = IsCte;
+		copy.CteName = CteName;
+		copy.IsRecursive = IsRecursive;
+		copy.CommentAbove = CommentAbove;
+		copy.CommentBelow = CommentBelow;
 		return copy;
 	}
 

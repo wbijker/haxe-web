@@ -14,6 +14,13 @@ extern class IAggregateSet<T1> {
 	/** `COUNT(*)` — how many rows are in the group. */
 	public function count():Aggregate<T1, Int>;
 
+	/**
+		The grouping key, or one member of it — `a.key(r -> r.unitId)` — selected beside the
+		aggregates. C#'s `g.Key`; here the key is named again, since a query's row types are all a
+		macro can read.
+	**/
+	public function key<TValue>(selector:T1->TValue):TValue;
+
 	/** `COUNT(DISTINCT x)`. */
 	public function countDistinct<TValue>(selector:T1->TValue):Aggregate<T1, Int>;
 
@@ -25,12 +32,6 @@ extern class IAggregateSet<T1> {
 
 	/** `SUM(DISTINCT x)`. */
 	public function sumDistinct<TValue>(selector:T1->TValue):Aggregate<T1, TValue>;
-
-	/**
-		The group's key, read beside its aggregates — C#'s `g.Key` after a `GroupBy`. It is the one
-		column that may sit beside an aggregate, and it must be one the query grouped by.
-	**/
-	public function key<TKey>(selector:T1->TKey):TKey;
 
 	/** `AVG(x)`. */
 	public function avg<TValue>(selector:T1->TValue):Aggregate<T1, Float>;

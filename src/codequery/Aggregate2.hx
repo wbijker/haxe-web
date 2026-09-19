@@ -7,6 +7,19 @@ import codequery.sqlexpressions.WindowBound;
 	query has. Generated from `Aggregate`; see it for what each does.
 **/
 abstract Aggregate2<T1, T2, T>(Dynamic) {
+	// A comparison or a sum written against an aggregate inside HAVING types as one against its
+	// value; nothing here runs, the lambda is read while compiling.
+	@:op(A == B) function eq(other:T):Bool return false;
+	@:op(A != B) function ne(other:T):Bool return false;
+	@:op(A < B) function lt(other:T):Bool return false;
+	@:op(A <= B) function le(other:T):Bool return false;
+	@:op(A > B) function gt(other:T):Bool return false;
+	@:op(A >= B) function ge(other:T):Bool return false;
+	@:op(A + B) function add(other:T):T return other;
+	@:op(A - B) function sub(other:T):T return other;
+	@:op(A * B) function mul(other:T):T return other;
+	@:op(A / B) function div(other:T):T return other;
+
 	/** The value the aggregate stands for. Never actually called. */
 	@:to function toValue():T {
 		return cast this;

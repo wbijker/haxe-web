@@ -2,7 +2,7 @@ package suites;
 
 import codequery.Query;
 import codequery.queries.ISelectQuery;
-import codequery.sqldrivers.SqlTranslator;
+import codequery.sqldrivers.NormalizedSqlTranslator;
 import codequery.testing.Assert;
 import codequery.testing.TestCase;
 
@@ -12,8 +12,9 @@ import codequery.testing.TestCase;
 	of the row is a column.
 **/
 class StaticReadTests extends TestCase {
+	/** Rendered with the values written in — C#'s `normalize: true` — so a value can be read off it. */
 	static function sql(query:ISelectQuery<Currency>):String {
-		return new SqlTranslator().ToSql(query.ToExpression());
+		return new NormalizedSqlTranslator().ToSql(query.ToExpression());
 	}
 
 	function testAStaticsMemberIsAValue() {
