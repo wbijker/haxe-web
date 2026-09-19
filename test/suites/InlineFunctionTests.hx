@@ -11,7 +11,7 @@ import codequery.testing.TestCase;
 using codequery.testing.SqlAssert;
 
 /** Flattened into the product's own columns — supplier_name, supplier_country. */
-class Supplier {
+class InlineSupplier {
 	public var name:String = "";
 	public var country:String = "";
 
@@ -19,13 +19,13 @@ class Supplier {
 }
 
 @tableName("products")
-class Product {
+class InlineFunctionProduct {
 	public var id:Int = 0;
 	public var name:String = "";
 	public var priceCents:Int = 0;
 	public var stock:Int = 0;
 	public var releasedOn:SqlDate;
-	public var supplier:Supplier = new Supplier();
+	public var supplier:InlineSupplier = new InlineSupplier();
 
 	public function new() {}
 }
@@ -57,14 +57,14 @@ class InlineFunctionTests extends TestCase {
 	}
 
 	/** What is left of a product's price after a discount worked out in Haxe. */
-	static function Discounted(p:Product, percentOff:Int):InlineFunction<Float> {
+	static function Discounted(p:InlineFunctionProduct, percentOff:Int):InlineFunction<Float> {
 		// Ordinary Haxe, run while the query is built: the query carries the number it worked out.
 		final remaining = 100 - percentOff;
 
 		return InlineFunction.create(() -> p.priceCents * remaining / 100);
 	}
 
-	static function InStock(p:Product):InlineFunction<Bool> {
+	static function InStock(p:InlineFunctionProduct):InlineFunction<Bool> {
 		return InlineFunction.create(() -> p.stock > 0);
 	}
 
@@ -76,11 +76,11 @@ class InlineFunctionTests extends TestCase {
 		return InlineFunction.create(() -> a + b + c);
 	}
 
-	static function Describe(s:Supplier):InlineFunction<String> {
+	static function Describe(s:InlineSupplier):InlineFunction<String> {
 		return InlineFunction.create(() -> s.name + " of " + s.country);
 	}
 
-	static function SupplierOf(p:Product):InlineFunction<String> {
+	static function SupplierOf(p:InlineFunctionProduct):InlineFunction<String> {
 		return InlineFunction.create(() -> p.supplier.country);
 	}
 
@@ -97,7 +97,7 @@ class InlineFunctionTests extends TestCase {
 		computed — a local it captured, so the query binds it rather than writing it in.
 	**/
 	function testAFunction_BuildsWhatItWouldHaveBeenWrittenAs() {
-		final divided = Query.select(Product).Select(p -> {cheap: Discounted(p, 10)}).ToExpression().selectionAt(0).binary(Divide);
+		final divided = Query.select(InlineFunctionProduct).Select(p -> {cheap: Discounted(p, 10)}).ToExpression().selectionAt(0).binary(Divide);
 		divided.Right.value(100);
 
 		final multiplied = divided.Left.binary(Multiply);
@@ -107,11 +107,11 @@ class InlineFunctionTests extends TestCase {
 
 	/** A column may be passed in: it arrives as the column, not as a value read off a row. */
 	function testAColumn_CanBePassedIn() {
-		Query.select(Product).Select(p -> {twiceTheStock: Double(p.stock)}).ToExpression().selectionAt(0).comparison("stock", Multiply, 2);
+		Query.select(InlineFunctionProduct).Select(p -> {twiceTheStock: Double(p.stock)}).ToExpression().selectionAt(0).comparison("stock", Multiply, 2);
 	}
 
 	function testAStringColumn_CanBePassedIn() {
-		final concat = Query.select(Product).Select(p -> {marked: AppendOld(p.name)}).ToExpression().selectionAt(0).call(SqlFunctions.Concat);
+		final concat = Query.select(InlineFunctionProduct).Select(p -> {marked: AppendOld(p.name)}).ToExpression().selectionAt(0).call(SqlFunctions.Concat);
 		Assert.count(2, concat.Arguments);
 
 		concat.Arguments[0].column("name");
@@ -120,19 +120,19 @@ class InlineFunctionTests extends TestCase {
 
 	/** The same function serves a plain value just as well — it is only an expression either way. */
 	function testAValue_CanBePassedInsteadOfAColumn() {
-		final doubled = Query.select(Product).Select(p -> {twenty: Double(10)}).ToExpression().selectionAt(0).binary(Multiply);
+		final doubled = Query.select(InlineFunctionProduct).Select(p -> {twenty: Double(10)}).ToExpression().selectionAt(0).binary(Multiply);
 
 		doubled.Left.value(10);
 		doubled.Right.value(2);
 	}
 
 	function testAFunction_NeedTakeNothing() {
-		Query.select(Product).Select(p -> {answer: Answer()}).ToExpression().selectionAt(0).value(42);
+		Query.select(InlineFunctionProduct).Select(p -> {answer: Answer()}).ToExpression().selectionAt(0).value(42);
 	}
 
 	/** The row it is given is the row the query reads — the statement's own first source. */
 	function testTheRowItIsGiven_IsTheQuerysOwnRow() {
-		final select = Query.select(Product).Select(p -> {cheap: Discounted(p, 25)}).ToExpression();
+		final select = Query.select(InlineFunctionProduct).Select(p -> {cheap: Discounted(p, 25)}).ToExpression();
 
 		final priced = select.selectionOf("cheap").binary().Left.binary();
 		final column = priced.Left.column("priceCents");
@@ -146,20 +146,20 @@ class InlineFunctionTests extends TestCase {
 		decision the database has to make.
 	**/
 	function testWhatItComputesInCSharp_ReachesTheQueryAsAValue() {
-		RemainingPercent(Query.select(Product).Select(p -> {cheap: Discounted(p, 10)}).ToExpression().selectionAt(0)).value(90);
-		RemainingPercent(Query.select(Product).Select(p -> {cheap: Discounted(p, 50)}).ToExpression().selectionAt(0)).value(50);
+		RemainingPercent(Query.select(InlineFunctionProduct).Select(p -> {cheap: Discounted(p, 10)}).ToExpression().selectionAt(0)).value(90);
+		RemainingPercent(Query.select(InlineFunctionProduct).Select(p -> {cheap: Discounted(p, 50)}).ToExpression().selectionAt(0)).value(50);
 	}
 
 	/** A function stands anywhere its value does — including a predicate. */
 	function testAFunction_WorksInAPredicate() {
-		final select = Query.select(Product).Where(p -> InStock(p)).ToExpression();
+		final select = Query.select(InlineFunctionProduct).Where(p -> InStock(p)).ToExpression();
 
 		select.whereClause().comparison("stock", GreaterThan, 0);
 	}
 
 	/** One function, both branches of a CASE — the reason for naming a piece of a query at all. */
 	function testOneFunction_ServesBothBranchesOfACase() {
-		final branches = Query.select(Product).Select(p -> {
+		final branches = Query.select(InlineFunctionProduct).Select(p -> {
 			price: p.releasedOn.getFullYear() < 2020 ? Discounted(p, 50) : Discounted(p, 10)
 		}).ToExpression().selectionAt(0).caseWhen();
 		Assert.count(1, branches.Branches);
@@ -175,7 +175,7 @@ class InlineFunctionTests extends TestCase {
 
 	/** A function may call another: each call is expanded where it stands. */
 	function testAFunction_CanUseAnother() {
-		final outer = Query.select(Product).Select(p -> {quadruple: DoubleTwice(p.stock)}).ToExpression().selectionAt(0).binary(Multiply);
+		final outer = Query.select(InlineFunctionProduct).Select(p -> {quadruple: DoubleTwice(p.stock)}).ToExpression().selectionAt(0).binary(Multiply);
 
 		outer.Right.value(2);
 		outer.Left.comparison("stock", Multiply, 2);
@@ -184,8 +184,8 @@ class InlineFunctionTests extends TestCase {
 	/** Nesting works the other way too: a function's argument may be another function's result. */
 	function testAFunctionsResult_CanBeAnothersArgument() {
 		SqlTree.assertSame(
-			Query.select(Product).Select(p -> {marked: p.name + " (old)"}).ToExpression().selectionAt(0),
-			Query.select(Product).Select(p -> {marked: AppendOld(p.name)}).ToExpression().selectionAt(0));
+			Query.select(InlineFunctionProduct).Select(p -> {marked: p.name + " (old)"}).ToExpression().selectionAt(0),
+			Query.select(InlineFunctionProduct).Select(p -> {marked: AppendOld(p.name)}).ToExpression().selectionAt(0));
 	}
 
 	// ---- what it refuses ------------------------------------------------------------------------------
@@ -208,7 +208,7 @@ class InlineFunctionTests extends TestCase {
 
 	/** Any argument that reads the row is carried whole — whatever was written around the column. */
 	function testAnyArgumentReadingTheRow_IsCarriedWhole() {
-		final outer = Query.select(Product).Select(p -> {x: Double(p.stock * 3)}).ToExpression().selectionAt(0).binary(Multiply);
+		final outer = Query.select(InlineFunctionProduct).Select(p -> {x: Double(p.stock * 3)}).ToExpression().selectionAt(0).binary(Multiply);
 
 		outer.Right.value(2);
 		outer.Left.comparison("stock", Multiply, 3);
@@ -216,7 +216,7 @@ class InlineFunctionTests extends TestCase {
 
 	/** The two kinds mix freely in one call. */
 	function testCarriedAndComputedArguments_MixInOneCall() {
-		final sum = Query.select(Product).Select(p -> {x: Blend(p.stock, 3 + 4, p.priceCents)}).ToExpression().selectionAt(0).binary(Add);
+		final sum = Query.select(InlineFunctionProduct).Select(p -> {x: Blend(p.stock, 3 + 4, p.priceCents)}).ToExpression().selectionAt(0).binary(Add);
 
 		sum.Right.column("priceCents");
 
@@ -233,30 +233,30 @@ class InlineFunctionTests extends TestCase {
 
 	/** A nested member reads the row as much as a top-level one does, so it is carried the same. */
 	function testANestedMember_CanBePassedIn() {
-		final shared = Query.select(Product).Select(p -> {marked: AppendOld(p.supplier.name)}).ToExpression().selectionAt(0);
+		final shared = Query.select(InlineFunctionProduct).Select(p -> {marked: AppendOld(p.supplier.name)}).ToExpression().selectionAt(0);
 
 		shared.call(SqlFunctions.Concat).Arguments[0].column("supplier_name");
-		SqlTree.assertSame(Query.select(Product).Select(p -> {marked: p.supplier.name + " (old)"}).ToExpression().selectionAt(0), shared);
+		SqlTree.assertSame(Query.select(InlineFunctionProduct).Select(p -> {marked: p.supplier.name + " (old)"}).ToExpression().selectionAt(0), shared);
 	}
 
 	/** The object itself can be passed, and its members read inside the expression. */
 	function testANestedObject_CanBePassedIn_AndItsMembersRead() {
 		SqlTree.assertSame(
-			Query.select(Product).Select(p -> {from: p.supplier.name + " of " + p.supplier.country}).ToExpression().selectionAt(0),
-			Query.select(Product).Select(p -> {from: Describe(p.supplier)}).ToExpression().selectionAt(0));
+			Query.select(InlineFunctionProduct).Select(p -> {from: p.supplier.name + " of " + p.supplier.country}).ToExpression().selectionAt(0),
+			Query.select(InlineFunctionProduct).Select(p -> {from: Describe(p.supplier)}).ToExpression().selectionAt(0));
 	}
 
 	/** The row itself carries its nested members with it. */
 	function testARowArgument_CarriesItsNestedMembers() {
-		Query.select(Product).Select(p -> {from: SupplierOf(p)}).ToExpression().selectionAt(0).column("supplier_country");
+		Query.select(InlineFunctionProduct).Select(p -> {from: SupplierOf(p)}).ToExpression().selectionAt(0).column("supplier_country");
 	}
 
 	// ---- standing in for its value ----------------------------------------------------------------------
 
 	/** A projection into a shape of its own: the function fills the member as the expression would. */
 	function testAFunction_FillsAMemberOfAProjectedType() {
-		final shared = Query.select(Product).Select(p -> {name: AppendOld(p.name), twice: Double(p.stock)}).ToExpression();
-		final byHand = Query.select(Product).Select(p -> {name: p.name + " (old)", twice: p.stock * 2}).ToExpression();
+		final shared = Query.select(InlineFunctionProduct).Select(p -> {name: AppendOld(p.name), twice: Double(p.stock)}).ToExpression();
+		final byHand = Query.select(InlineFunctionProduct).Select(p -> {name: p.name + " (old)", twice: p.stock * 2}).ToExpression();
 
 		SqlTree.assertSame(byHand, shared);
 		shared.selectionOf("name").call(SqlFunctions.Concat).Arguments[0].column("name");
@@ -264,7 +264,7 @@ class InlineFunctionTests extends TestCase {
 
 	/** Where an operand's type is what Haxe reads, the conversion cannot help; `.value` names it. */
 	function testValue_LetsAGenericArgumentBeInferred() {
-		final branches = Query.select(Product).Select(p -> {
+		final branches = Query.select(InlineFunctionProduct).Select(p -> {
 			price: p.stock > 0 ? Discounted(p, 10).value : Discounted(p, 50).value
 		}).ToExpression().selectionAt(0).caseWhen();
 		Assert.count(1, branches.Branches);
@@ -276,8 +276,8 @@ class InlineFunctionTests extends TestCase {
 
 	function testValue_BuildsTheSameAsTheFunctionItself() {
 		SqlTree.assertSame(
-			Query.select(Product).Select(p -> {x: Double(p.stock)}).ToExpression().selectionAt(0),
-			Query.select(Product).Select(p -> {x: Double(p.stock).value}).ToExpression().selectionAt(0));
+			Query.select(InlineFunctionProduct).Select(p -> {x: Double(p.stock)}).ToExpression().selectionAt(0),
+			Query.select(InlineFunctionProduct).Select(p -> {x: Double(p.stock).value}).ToExpression().selectionAt(0));
 	}
 
 	function testValue_ReadOutsideAQuery_Throws() {

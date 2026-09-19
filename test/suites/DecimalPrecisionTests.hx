@@ -23,16 +23,16 @@ class DecimalPrecisionTests extends TestCase {
 	// --- What the field says -----------------------------------------------------------------------
 
 	function testTheAttributeSaysPrecisionAndScale() {
-		Assert.equals(SqlType.SqlDecimal(12, 4), column("factor").Type);
-		Assert.equals(SqlType.SqlDecimal(9, 3), column("adjustment").Type);
+		Assert.equals(SqlType.SqlDecimal(12, 4), column("factor").SqlType());
+		Assert.equals(SqlType.SqlDecimal(9, 3), column("adjustment").SqlType());
 	}
 
 	function testScaleDefaultsToNone() {
-		Assert.equals(SqlType.SqlDecimal(18, 0), column("cents").Type);
+		Assert.equals(SqlType.SqlDecimal(18, 0), column("cents").SqlType());
 	}
 
 	function testSayingNothingLeavesItToTheDialect() {
-		Assert.isFalse(column("plain").Type.match(SqlDecimal(_, _)), "no precision is declared");
+		Assert.isFalse(column("plain").SqlType().match(SqlDecimal(_, _)), "no precision is declared");
 	}
 
 	// --- What the fluent surface says --------------------------------------------------------------

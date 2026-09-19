@@ -24,4 +24,10 @@ enum SqlType {
 		so a cast can reach a type this port has never heard of.
 	**/
 	SqlNamed(name:String);
+	// The rest of the C# `SqlType`, as far as a schema needs to name them.
+	SqlChar(length:Int);
+	SqlGuid;
+	SqlJson;
+	SqlBinary;
+	SqlTime;
 }

@@ -72,7 +72,7 @@ class InlineViewTests extends TestCase {
 	}
 
 	static function ViewBody(db:InlineShop, name:String):String {
-		final view = SchemaBuilder.Of(db).View(name);
+		final view = SchemaBuilder.Of(db).GetView(name);
 		Assert.notNull(view, 'No view named $name');
 		return new SqlTranslator().ToDdl(CreateView(view));
 	}

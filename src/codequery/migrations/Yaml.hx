@@ -152,6 +152,18 @@ class Yaml {
 		final name = StringTools.trim(text.substr(0, colon));
 		final rest = StringTools.trim(text.substr(colon + 1));
 
+		// A literal block: the lines indented under the key, as they were written.
+		if (rest == "|") {
+			final depth = Indent(lines[at.index - 1]);
+			final held = [];
+			while (at.index < lines.length && Indent(lines[at.index]) > depth) {
+				held.push(lines[at.index++]);
+			}
+			final inner = held.length == 0 ? 0 : Indent(held[0]);
+			Reflect.setField(into, name, [for (line in held) line.substr(inner)].join("\n"));
+			return;
+		}
+
 		if (rest != "") {
 			Reflect.setField(into, name, ScalarOf(rest));
 			return;

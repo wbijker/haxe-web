@@ -92,6 +92,11 @@ class InsertValidation {
 			case SqlSmallInt: "SmallInt";
 			case SqlReal: "Real";
 			case SqlNamed(name): name;
+			case SqlChar(length): 'Char($length)';
+			case SqlGuid: "Guid";
+			case SqlJson: "Json";
+			case SqlBinary: "Binary";
+			case SqlTime: "Time";
 			case SqlUnknown: "Unknown";
 		}
 		return rule.Nullable ? type : type + ", NOT NULL";

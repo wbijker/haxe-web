@@ -5,9 +5,12 @@ package codequery.migrations;
 	records. A migration is the difference between two of these.
 **/
 class DatabaseSchema {
-	public final Version:Int;
-	public final Name:Null<String>;
-	public final Tables:Array<DatabaseTableDefinition>;
+	public var Version:Int;
+	public var Name:Null<String>;
+	public var Tables:Array<DatabaseTableDefinition>;
+	public var Types:Array<DatabaseObjectTypeDefinition> = [];
+	public var Routines:Array<DatabaseRoutineDefinition> = [];
+	public var Seeds:Array<SeedDataDefinition> = [];
 
 	/** The views the schema declares — C#'s view routines. */
 	public final Views:Array<DatabaseViewDefinition>;
@@ -20,7 +23,7 @@ class DatabaseSchema {
 		this.Views = views == null ? [] : views;
 	}
 
-	public function View(name:String):Null<DatabaseViewDefinition> {
+	public function GetView(name:String):Null<DatabaseViewDefinition> {
 		for (view in Views) {
 			if (view.Name == name) {
 				return view;

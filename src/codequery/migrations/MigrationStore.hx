@@ -44,7 +44,7 @@ class MigrationStore {
 		FileSystem.createDirectory(folder);
 		File.saveContent('$folder/up.sql', migration.Up);
 		File.saveContent('$folder/down.sql', migration.Down);
-		File.saveContent('$folder/snapshot.yml', migration.Snapshot);
+		File.saveContent('$folder/snapshot.yaml', migration.Snapshot);
 		return folder;
 		#else
 		throw "Migrations are written to disk, which this target has none of";
@@ -61,7 +61,7 @@ class MigrationStore {
 	function Read(name:String):Migration {
 		final folder = Path(name);
 		return new Migration(name, Content('$folder/up.sql'), Content('$folder/down.sql'),
-			Content('$folder/snapshot.yml'));
+			FileSystem.exists('$folder/snapshot.yaml') ? Content('$folder/snapshot.yaml') : Content('$folder/snapshot.yml'));
 	}
 
 	function Content(file:String):String {

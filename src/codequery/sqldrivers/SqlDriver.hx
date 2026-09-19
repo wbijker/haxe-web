@@ -36,6 +36,10 @@ class SqlDriver implements ISqlDriver {
 		return Translator.ToDdl(change);
 	}
 
+	public function ToDdlSql(change:codequery.sqlexpressions.SchemaChangeExpression, pretty:Bool = false):String {
+		return Translator.ToDdlSql(change, pretty);
+	}
+
 	/** Nothing to run against unless a runtime says otherwise. */
 	public function Executor():Null<IDatabaseExecutor> {
 		return null;

@@ -151,6 +151,11 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 			return Against(merge.AllSources(), () -> MergeSql(merge));
 		}
 
+		final ddl = Std.downcast(cast statement, codequery.sqlexpressions.SchemaChangeExpression);
+		if (ddl != null) {
+			return ToDdlSql(ddl);
+		}
+
 		// A migration's SQL is written rather than built, and goes through as it stands.
 		final raw = Std.downcast(cast statement, codequery.migrations.RawStatement);
 		if (raw != null) {
@@ -914,55 +919,29 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 	**/
 	public function ToDdl(change:codequery.migrations.SchemaChange):String {
 		return switch change {
-			case CreateTable(table):
-				final columns = table.Columns.map(ColumnDefinition).join(", ");
-				final kind = table.Temporary ? "TEMPORARY " : (table.Unlogged ? "UNLOGGED " : "");
-				'CREATE ${kind}TABLE ${table.Name} ($columns)';
-
-			case DropTable(table):
-				'DROP TABLE ${table.Name}';
-
-			case AddColumn(table, column):
-				'ALTER TABLE $table ADD COLUMN ${ColumnDefinition(column)}';
-
-			case DropColumn(table, column):
-				'ALTER TABLE $table DROP COLUMN ${column.Name}';
-
-			case AlterColumn(table, _, to):
-				'ALTER TABLE $table ALTER COLUMN ${to.Name} TYPE ${RenderType(to.Type)}';
-
-			// A view changed is put back by the strategy it declares; replaced in place by default.
 			case CreateView(view) | AlterView(_, view):
 				BuildCreateViewSql(view.Name, view.Select, view.Materialized, view.Strategy);
-
 			case DropView(view):
 				BuildDropViewSql(view.Name, view.Materialized);
+			case _:
+				ToDdlSql(DdlTranslator.Expression(change));
 		}
 	}
 
-	/**
-		The statement that puts a view in the database, so a changed view is recreated on migration:
-		`CREATE OR REPLACE VIEW`, or a drop and a create when the strategy asks for one. A dialect
-		that spells it differently overrides this.
-	**/
+	/** `CREATE [MATERIALIZED] VIEW`, as the strategy says to make it. */
 	public function BuildCreateViewSql(name:String, select:String, materialized:Bool = false,
 			?strategy:codequery.migrations.DbMigrationStrategy):String {
 		return ViewStatements.Create(name, select, materialized, strategy == null ? CreateOrReplace : strategy);
 	}
 
-	/** The `DROP VIEW` that undoes `BuildCreateViewSql`. */
+	/** `DROP [MATERIALIZED] VIEW`. */
 	public function BuildDropViewSql(name:String, materialized:Bool = false):String {
 		return ViewStatements.Drop(name, materialized);
 	}
 
-	function ColumnDefinition(column:codequery.migrations.DatabaseColumnDefinition):String {
-		var sql = '${column.Name} ${RenderType(column.Type)}';
-		if (column.PrimaryKey) {
-			sql += " PRIMARY KEY";
-		} else if (!column.Nullable) {
-			sql += " NOT NULL";
-		}
-		return sql;
+	/** A schema change expression as DDL — `pretty` lays a CREATE TABLE out one column a line. */
+	public function ToDdlSql(change:codequery.sqlexpressions.SchemaChangeExpression, pretty:Bool = false):String {
+		return new DdlTranslator(this, pretty).Render(change);
 	}
 
 	public function RenderType(type:SqlType):String {
@@ -980,6 +959,11 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 			case SqlSmallInt: "SMALLINT";
 			case SqlReal: "REAL";
 			case SqlNamed(name): name;
+			case SqlChar(length): 'CHAR($length)';
+			case SqlGuid: "UUID";
+			case SqlJson: "JSON";
+			case SqlBinary: "BYTEA";
+			case SqlTime: "TIME";
 		}
 	}
 

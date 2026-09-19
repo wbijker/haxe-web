@@ -69,7 +69,7 @@ class LateralCorrelationTests extends TestCase {
 		// The depot is the first join (t1); the body names it, not the statement's own source.
 		final rendered = sql(select);
 		Assert.contains("INNER JOIN depots AS t1 ON", rendered);
-		Assert.contains("LEFT JOIN LATERAL (SELECT * FROM trip_telemetry AS t4 WHERE t4.tripNumber = t1.code LIMIT 1) AS t2 ON TRUE", rendered);
+		Assert.contains("LEFT JOIN LATERAL (SELECT * FROM trip_telemetry AS t3 WHERE t3.tripNumber = t1.code LIMIT 1) AS t2 ON TRUE", rendered);
 	}
 
 	function testInnerJoinLateral_ReadsTheOuterRow() {

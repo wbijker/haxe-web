@@ -174,7 +174,7 @@ class DbViewMigrationTests extends TestCase {
 	}
 
 	static function Body(snapshot:DatabaseSchema, name:String):String {
-		final view = snapshot.View(name);
+		final view = snapshot.GetView(name);
 		Assert.notNull(view, 'No view named $name');
 		return new SqlTranslator().ToDdl(CreateView(view));
 	}

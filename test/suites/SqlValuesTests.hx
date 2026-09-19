@@ -15,15 +15,15 @@ using codequery.testing.SqlAssert;
 	constructor, usable as a query source or an INSERT … SELECT.
 **/
 class SqlValuesTests extends TestCase {
-	static function widget(id:Int, name:String, active:Bool):Widget {
-		final made = new Widget();
+	static function widget(id:Int, name:String, active:Bool):SqlValuesWidget {
+		final made = new SqlValuesWidget();
 		made.id = id;
 		made.name = name;
 		made.active = active;
 		return made;
 	}
 
-	static function sample():Array<Widget> {
+	static function sample():Array<SqlValuesWidget> {
 		return [widget(1, "a", true), widget(2, "b'c", false)];
 	}
 
@@ -33,7 +33,7 @@ class SqlValuesTests extends TestCase {
 	}
 
 	function testTheRowsAndTheirColumnsAreTheSource() {
-		final select = SqlValues.of(Widget, sample()).ToExpression();
+		final select = SqlValues.of(SqlValuesWidget, sample()).ToExpression();
 
 		final values = valuesSource(select);
 		Assert.equals(["id", "name", "active"], values.ColumnNames);
@@ -62,7 +62,7 @@ class SqlValuesTests extends TestCase {
 	function testAScalarListReadsAsAnInList() {
 		final ids = [7, 8];
 
-		final select = Query.select(Widget)
+		final select = Query.select(SqlValuesWidget)
 			.Where(w -> Sql.inQuery(w.id, SqlValues.of(Int, ids)))
 			.Select(w -> {id: w.id})
 			.ToExpression();
@@ -84,7 +84,7 @@ class SqlValuesTests extends TestCase {
 
 	function testPostgres_RendersValuesTableConstructor() {
 		// The port writes a boolean as 1 or 0, where PostgreSQL's own driver writes TRUE and FALSE.
-		final sql = new SqlTranslator().ToSql(SqlValues.of(Widget, sample()).ToExpression());
+		final sql = new SqlTranslator().ToSql(SqlValues.of(SqlValuesWidget, sample()).ToExpression());
 		Assert.contains("(VALUES (1, 'a', 1), (2, 'b''c', 0)) AS t0(id, name, active)", sql);
 		Assert.contains("t0.id", sql);
 	}
@@ -108,7 +108,7 @@ class SqlValuesTests extends TestCase {
 	}
 }
 
-class Widget {
+class SqlValuesWidget {
 	public var id:Int = 0;
 	public var name:String = "";
 	public var active:Bool = false;
