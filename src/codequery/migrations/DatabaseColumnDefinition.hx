@@ -12,6 +12,15 @@ class DatabaseColumnDefinition {
 	public final PrimaryKey:Bool;
 
 	public function new(name:String, type:SqlType, nullable:Bool, primaryKey:Bool = false) {
+		// A precision no database would take is refused here, naming the column, rather than by
+		// the database naming nothing.
+		switch type {
+			case SqlDecimal(precision, scale) if (precision <= 0):
+				throw 'Column $name: a decimal has at least one digit, not $precision';
+			case SqlDecimal(precision, scale) if (scale > precision):
+				throw 'Column $name: a decimal cannot keep more after the point ($scale) than it has digits ($precision)';
+			case _:
+		}
 		this.Name = name;
 		this.Type = type;
 		this.Nullable = nullable;

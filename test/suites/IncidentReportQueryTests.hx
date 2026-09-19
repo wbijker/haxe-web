@@ -125,35 +125,31 @@ class IncidentReportQueryTests extends TestCase {
 	**/
 	function testTheReport() {
 		final sql = ReportSql();
+		// The three projected queries stand as their own statements, the wrapper ToExpression would
+		// have put round each folded away as C# does, so the aliases run t0.. from the outer query.
 		Assert.equals(
-			"SELECT * FROM ("
-			+ "WITH latest_event AS ("
-			+ "SELECT * FROM ("
-			+ "SELECT DISTINCT ON (t5.incident_slug) t5.incident_slug AS incident_slug, t5.incident_status AS incident_status, t5.identification AS identification"
-			+ " FROM incident_telemetry AS t5"
-			+ " WHERE t5.incident_slug IS NOT NULL AND t5.incident_slug <> ''"
-			+ " ORDER BY t5.incident_slug ASC, t5.timestamp DESC, t5.instance_id DESC"
-			+ ") AS t4"
+			"WITH latest_event AS ("
+			+ "SELECT DISTINCT ON (t3.incident_slug) t3.incident_slug AS incident_slug, t3.incident_status AS incident_status, t3.identification AS identification"
+			+ " FROM incident_telemetry AS t3"
+			+ " WHERE t3.incident_slug IS NOT NULL AND t3.incident_slug <> ''"
+			+ " ORDER BY t3.incident_slug ASC, t3.timestamp DESC, t3.instance_id DESC"
 			+ "), raised_event AS ("
-			+ "SELECT * FROM ("
-			+ "SELECT DISTINCT ON (t7.incident_slug) t7.incident_slug AS incident_slug, t7.timestamp AS raised_at, t7.type IS DISTINCT FROM 'Update' AS has_create_event"
-			+ " FROM incident_telemetry AS t7"
-			+ " WHERE t7.incident_slug IS NOT NULL AND t7.incident_slug <> ''"
-			+ " ORDER BY t7.incident_slug ASC, t7.type IS DISTINCT FROM 'Update' DESC, t7.timestamp ASC, t7.instance_id ASC"
-			+ ") AS t6"
+			+ "SELECT DISTINCT ON (t4.incident_slug) t4.incident_slug AS incident_slug, t4.timestamp AS raised_at, t4.type IS DISTINCT FROM 'Update' AS has_create_event"
+			+ " FROM incident_telemetry AS t4"
+			+ " WHERE t4.incident_slug IS NOT NULL AND t4.incident_slug <> ''"
+			+ " ORDER BY t4.incident_slug ASC, t4.type IS DISTINCT FROM 'Update' DESC, t4.timestamp ASC, t4.instance_id ASC"
 			+ ") "
-			+ "SELECT t1.incident_slug AS IncidentSlug, t2.raised_at AS RaisedAt, t2.has_create_event AS HasCreateEvent,"
-			+ " CASE WHEN t1.incident_status = 'Closed' THEN 'Resolved' ELSE CASE WHEN t2.raised_at >= NOW() - INTERVAL '3 days' THEN 'Within TAT' ELSE 'Overdue' END END AS TatBand,"
-			+ " t3.registration_1 AS TruckRegistration"
-			+ " FROM latest_event AS t1"
-			+ " INNER JOIN raised_event AS t2 ON t2.incident_slug = t1.incident_slug"
+			+ "SELECT t0.incident_slug AS IncidentSlug, t1.raised_at AS RaisedAt, t1.has_create_event AS HasCreateEvent,"
+			+ " CASE WHEN t0.incident_status = 'Closed' THEN 'Resolved' ELSE CASE WHEN t1.raised_at >= NOW() - INTERVAL '3 days' THEN 'Within TAT' ELSE 'Overdue' END END AS TatBand,"
+			+ " t2.registration_1 AS TruckRegistration"
+			+ " FROM latest_event AS t0"
+			+ " INNER JOIN raised_event AS t1 ON t1.incident_slug = t0.incident_slug"
 			+ " LEFT JOIN LATERAL ("
-			+ "SELECT * FROM trip_telemetry AS t8"
-			+ " WHERE t8.trip_number = t1.identification AND t8.timestamp <= t2.raised_at"
-			+ " ORDER BY t8.timestamp DESC, t8.instance_id DESC"
+			+ "SELECT * FROM trip_telemetry AS t5"
+			+ " WHERE t5.trip_number = t0.identification AND t5.timestamp <= t1.raised_at"
+			+ " ORDER BY t5.timestamp DESC, t5.instance_id DESC"
 			+ " LIMIT 1"
-			+ ") AS t3 ON TRUE"
-			+ ") AS t0",
+			+ ") AS t2 ON TRUE",
 			sql);
 	}
 }

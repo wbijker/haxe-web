@@ -50,7 +50,7 @@ class Integration_ConstructedObjectTests extends TestCase {
 
 	function testAnObjectBuiltInTheProjection_SelectsItsMembersUnderItsName() {
 		Assert.contains(
-			"SELECT t1.name AS name, t1.price AS cost_amount, 'ZAR' AS cost_currency FROM built_parts AS t1",
+			"SELECT t0.name AS name, t0.price AS cost_amount, 'ZAR' AS cost_currency FROM built_parts AS t0",
 			Sql(Query.select(BuiltPart)
 				.Select(r -> {name: r.name, cost: {amount: r.price, currency: "ZAR"}})
 				.ToExpression()));
@@ -58,7 +58,7 @@ class Integration_ConstructedObjectTests extends TestCase {
 
 	function testAnObjectBuiltInsideOne_CarriesBothNames() {
 		Assert.contains(
-			"SELECT t1.price AS money_amount, 'ZAR' AS money_rate_symbol, t1.factor AS money_rate_factor FROM built_parts AS t1",
+			"SELECT t0.price AS money_amount, 'ZAR' AS money_rate_symbol, t0.factor AS money_rate_factor FROM built_parts AS t0",
 			Sql(Query.select(BuiltPart)
 				.Select(r -> {
 					money: {
@@ -71,7 +71,7 @@ class Integration_ConstructedObjectTests extends TestCase {
 
 	function testAnObjectBuiltIntoATypedRow_SelectsTheSameWay() {
 		Assert.contains(
-			"t1.price AS cost_amount",
+			"t0.price AS cost_amount",
 			Sql(Query.select(BuiltPart)
 				.Select(r -> ({name: r.name, cost: {amount: r.price, currency: "ZAR"}} : BuiltPriced))
 				.ToExpression()));

@@ -17,8 +17,20 @@ extern class IAggregateSet<T1> {
 	/** `COUNT(DISTINCT x)`. */
 	public function countDistinct<TValue>(selector:T1->TValue):Aggregate<T1, Int>;
 
+	/** `COUNT(x)` — the values rather than the rows, so a null is not counted. */
+	public function countValues<TValue>(selector:T1->TValue):Aggregate<T1, Int>;
+
 	/** `SUM(x)`. */
 	public function sum<TValue>(selector:T1->TValue):Aggregate<T1, TValue>;
+
+	/** `SUM(DISTINCT x)`. */
+	public function sumDistinct<TValue>(selector:T1->TValue):Aggregate<T1, TValue>;
+
+	/**
+		The group's key, read beside its aggregates — C#'s `g.Key` after a `GroupBy`. It is the one
+		column that may sit beside an aggregate, and it must be one the query grouped by.
+	**/
+	public function key<TKey>(selector:T1->TKey):TKey;
 
 	/** `AVG(x)`. */
 	public function avg<TValue>(selector:T1->TValue):Aggregate<T1, Float>;

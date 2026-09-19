@@ -13,9 +13,17 @@ class SqlFunctionExpression implements ISqlExpression {
 	/** `a || b` rather than `f(a, b)` — a function written between its arguments. */
 	public final Infix:Bool;
 
-	public function new(name:String, arguments:Array<ISqlExpression>, infix:Bool = false) {
+	/**
+		`WITHIN GROUP (ORDER BY …)` — the ordering an ordered-set aggregate reads its argument in,
+		as `percentile_cont(0.5) WITHIN GROUP (ORDER BY x)` does. Null for every other function.
+	**/
+	public final WithinGroup:Null<Array<OrderByExpression>>;
+
+	public function new(name:String, arguments:Array<ISqlExpression>, infix:Bool = false,
+			?withinGroup:Array<OrderByExpression>) {
 		this.Name = name;
 		this.Arguments = arguments;
 		this.Infix = infix;
+		this.WithinGroup = withinGroup;
 	}
 }

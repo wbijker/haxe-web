@@ -45,8 +45,8 @@ class InsertFromSelectTests extends TestCase {
 
 		Assert.equals("archived_orders", insert.Target.tableName());
 		Assert.equals(["id", "customer"], insert.insertColumns());
-		// A projection is a query over the filtered rows, so the shape is one statement in.
-		final projected = insert.insertSelect().subquery();
+		// A projection reads its rows from the table directly, as C#'s ToExpression leaves it.
+		final projected = insert.insertSelect();
 		Assert.equals("orders", projected.selectTableName());
 		Assert.equals(["id", "customer"], projected.memberNames());
 		projected.whereClause().column("shipped");

@@ -76,7 +76,7 @@ class Integration_OwnedObjectQueryTests extends TestCase {
 
 	function testTheFieldsOfIt_AreTheirOwnColumns() {
 		Assert.contains(
-			"SELECT t1.price_forex AS forex, t1.price_type AS type, t1.price_zar AS zar FROM owned_bookings AS t1",
+			"SELECT t0.price_forex AS forex, t0.price_type AS type, t0.price_zar AS zar FROM owned_bookings AS t0",
 			Sql(Db().Bookings.From().Select(f -> {forex: f.price.forex, type: f.price.type, zar: f.price.zar}).ToExpression()));
 	}
 
@@ -103,8 +103,8 @@ class Integration_OwnedObjectQueryTests extends TestCase {
 
 	function testTheObjectBesideOtherColumns_TakesItsOwnColumnsAlong() {
 		Assert.contains(
-			"SELECT t1.price_type AS price_type, t1.price_zar AS price_zar, t1.price_forex AS price_forex, "
-			+ "t1.checkOut AS checkOut, t1.guestId AS guestId FROM owned_bookings AS t1",
+			"SELECT t0.price_type AS price_type, t0.price_zar AS price_zar, t0.price_forex AS price_forex, "
+			+ "t0.checkOut AS checkOut, t0.guestId AS guestId FROM owned_bookings AS t0",
 			Sql(Db().Bookings.From().Select(f -> {price: f.price, checkOut: f.checkOut, guestId: f.guestId}).ToExpression()));
 	}
 
@@ -157,7 +157,7 @@ class Integration_OwnedObjectQueryTests extends TestCase {
 	function testAFieldRead_NamesTheColumnTheTableHas() {
 		final db = new OwnedNamedDb();
 
-		Assert.contains("t1.price_zar_amount", Sql(db.Invoices.From().Select(i -> i.price.zar).ToExpression()));
+		Assert.contains("t0.price_zar_amount", Sql(db.Invoices.From().Select(i -> i.price.zar).ToExpression()));
 	}
 
 	function testTheObjectRead_NamesTheColumnsTheTableHas() {
@@ -165,8 +165,8 @@ class Integration_OwnedObjectQueryTests extends TestCase {
 
 		final sql = Sql(db.Invoices.From().Select(i -> i.price).ToExpression());
 
-		Assert.contains("t1.price_kind", sql);
-		Assert.contains("t1.price_zar_amount", sql);
+		Assert.contains("t0.price_kind", sql);
+		Assert.contains("t0.price_zar_amount", sql);
 	}
 
 	function testAnObjectWithNamedColumns_SurvivesTheRoundTrip() {

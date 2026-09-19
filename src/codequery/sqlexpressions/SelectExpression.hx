@@ -72,6 +72,30 @@ class SelectExpression implements ISqlStatement {
 		return sources;
 	}
 
+	/** Whether the statement says nothing beyond its source — `SELECT * FROM <source>`. */
+	public var IsEmpty(get, never):Bool;
+
+	function get_IsEmpty():Bool {
+		return IsEmptyApartFromRowRules && !IsDistinct && Limit == null && Offset == null;
+	}
+
+	/** `SELECT * FROM (<subquery>)` and nothing else, which says no more than the subquery does. */
+	public var IsSimpleWrapper(get, never):Bool;
+
+	function get_IsSimpleWrapper():Bool {
+		return Std.isOfType(Source, QuerySqlSource) && IsEmpty;
+	}
+
+	/** Empty but for DISTINCT, LIMIT or OFFSET — the clauses that can move into a subquery. */
+	public var IsEmptyApartFromRowRules(get, never):Bool;
+
+	function get_IsEmptyApartFromRowRules():Bool {
+		return Joins.length == 0 && Selection == null && Where == null && GroupBy.length == 0
+			&& GroupingSets.length == 0 && With.length == 0 && Lock == None && Unions.length == 0
+			&& Having == null && Windows.length == 0 && DistinctOn.length == 0 && OrderBy.length == 0
+			&& !WithTies && !Percent;
+	}
+
 	/** A copy, so a clause answers with a statement of its own and leaves this one alone. */
 	public function Fork():SelectExpression {
 		final copy = new SelectExpression(Source);
@@ -114,23 +138,10 @@ class SelectExpression implements ISqlStatement {
 		return copy;
 	}
 
-	/** Nothing has been said beyond the source: `SELECT * FROM <source>`. */
-	public function IsEmpty():Bool {
-		return Selection == null
-			&& Where == null
-			&& Joins.length == 0
-			&& OrderBy.length == 0
-			&& GroupBy.length == 0
-			&& Having == null
-			&& Unions.length == 0
-			&& DistinctOn.length == 0
-			&& !IsDistinct
-			&& Limit == null
-			&& Offset == null;
-	}
+	/** A plain read of one table, with nothing said about it. */
+	public var IsSimpleTableQuery(get, never):Bool;
 
-	/** `SELECT * FROM <table>` and nothing more — which, as a source, is the table itself. */
-	public function IsSimpleTableQuery():Bool {
-		return Std.isOfType(Source, TableSqlSource) && IsEmpty();
+	function get_IsSimpleTableQuery():Bool {
+		return Std.isOfType(Source, TableSqlSource) && IsEmpty;
 	}
 }

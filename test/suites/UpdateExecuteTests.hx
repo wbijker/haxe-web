@@ -55,7 +55,7 @@ class UpdateExecuteTests extends TestCase {
 			.Where((target, s) -> target.id == 1)
 			.Set(target -> target.level, (target, s) -> s.level);
 
-		Assert.equals("UPDATE staff AS t0 SET level = t1.level FROM (SELECT * FROM (SELECT t3.level AS level FROM staff AS t3 WHERE t3.id = 2) AS t2) AS t1 WHERE t0.id = 1",
+		Assert.equals("UPDATE staff AS t0 SET level = t1.level FROM (SELECT t2.level AS level FROM staff AS t2 WHERE t2.id = 2) AS t1 WHERE t0.id = 1",
 			new SqlTranslator().ToSql(update.ToExpression()));
 		Assert.skip(NoDatabase);
 	}

@@ -6,10 +6,19 @@ class DatabaseTableDefinition {
 	public final Schema:Null<String>;
 	public final Columns:Array<DatabaseColumnDefinition>;
 
-	public function new(name:String, columns:Array<DatabaseColumnDefinition>, ?schema:String) {
+	/** `CREATE TEMPORARY TABLE` — gone when the session is. */
+	public final Temporary:Bool;
+
+	/** `CREATE UNLOGGED TABLE` — not written to the log, so faster and not crash-safe. */
+	public final Unlogged:Bool;
+
+	public function new(name:String, columns:Array<DatabaseColumnDefinition>, ?schema:String,
+			temporary:Bool = false, unlogged:Bool = false) {
 		this.Name = name;
 		this.Columns = columns;
 		this.Schema = schema;
+		this.Temporary = temporary;
+		this.Unlogged = unlogged;
 	}
 
 	public function Column(name:String):Null<DatabaseColumnDefinition> {

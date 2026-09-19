@@ -89,6 +89,9 @@ class InsertValidation {
 			case SqlText: "Text";
 			case SqlDate: "Date";
 			case SqlTimestamp: "DateTime";
+			case SqlSmallInt: "SmallInt";
+			case SqlReal: "Real";
+			case SqlNamed(name): name;
 			case SqlUnknown: "Unknown";
 		}
 		return rule.Nullable ? type : type + ", NOT NULL";

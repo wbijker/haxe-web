@@ -36,34 +36,34 @@ class DbFunctionTests extends TestCase {
 	final driver = new SqlTranslator();
 
 	function testNumeric_Math_Functions() {
-		Assert.contains("ABS(t1.amount)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.abs(r.amount)})));
-		Assert.contains("SIGN(t1.amount)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.sign(r.amount)})));
-		Assert.contains("CEIL(t1.amount)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.ceil(r.amount)})));
-		Assert.contains("FLOOR(t1.amount)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.floor(r.amount)})));
-		Assert.contains("ROUND(t1.amount, 2)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.round(r.amount, 2)})));
-		Assert.contains("POWER(t1.value, 2)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.power(r.value, 2)})));
-		Assert.contains("SQRT(t1.value)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.sqrt(r.value)})));
-		Assert.contains("EXP(t1.value)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.exp(r.value)})));
-		Assert.contains("LN(t1.value)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.ln(r.value)})));
-		Assert.contains("LOG(t1.value)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.log(r.value)})));
+		Assert.contains("ABS(t0.amount)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.abs(r.amount)})));
+		Assert.contains("SIGN(t0.amount)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.sign(r.amount)})));
+		Assert.contains("CEIL(t0.amount)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.ceil(r.amount)})));
+		Assert.contains("FLOOR(t0.amount)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.floor(r.amount)})));
+		Assert.contains("ROUND(t0.amount, 2)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.round(r.amount, 2)})));
+		Assert.contains("POWER(t0.value, 2)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.power(r.value, 2)})));
+		Assert.contains("SQRT(t0.value)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.sqrt(r.value)})));
+		Assert.contains("EXP(t0.value)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.exp(r.value)})));
+		Assert.contains("LN(t0.value)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.ln(r.value)})));
+		Assert.contains("LOG(t0.value)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.log(r.value)})));
 	}
 
 	function testConditional_And_Conversion() {
-		Assert.contains("COALESCE(t1.note, 'x')", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.coalesce(r.note, "x")})));
-		Assert.contains("NULLIF(t1.amount, 0)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.nullIf(r.amount, 0)})));
-		Assert.contains("GREATEST(t1.amount, 0)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.greatest(r.amount, 0)})));
-		Assert.contains("LEAST(t1.amount, 0)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.least(r.amount, 0)})));
-		Assert.contains("CASE WHEN t1.amount > 0 THEN 'pos' ELSE 'neg' END",
+		Assert.contains("COALESCE(t0.note, 'x')", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.coalesce(r.note, "x")})));
+		Assert.contains("NULLIF(t0.amount, 0)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.nullIf(r.amount, 0)})));
+		Assert.contains("GREATEST(t0.amount, 0)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.greatest(r.amount, 0)})));
+		Assert.contains("LEAST(t0.amount, 0)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.least(r.amount, 0)})));
+		Assert.contains("CASE WHEN t0.amount > 0 THEN 'pos' ELSE 'neg' END",
 			Pg(Query.select(FunctionRow).Select(r -> {v: r.amount > 0 ? "pos" : "neg"})));
 	}
 
 	/** `INITCAP`, `split_part` and `STRING_AGG` are PostgreSQL's own and are not ported. */
 	function testString_Functions() {
-		Assert.contains("t1.name || '!'", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.concat(r.name, "!")})));
-		Assert.contains("LEFT(t1.name, 3)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.left(r.name, 3)})));
-		Assert.contains("RIGHT(t1.name, 3)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.right(r.name, 3)})));
-		Assert.contains("t1.name LIKE 'A%'", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.like(r.name, "A%")})));
-		Assert.contains("t1.name ILIKE 'a%'", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.ilike(r.name, "a%")})));
+		Assert.contains("t0.name || '!'", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.concat(r.name, "!")})));
+		Assert.contains("LEFT(t0.name, 3)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.left(r.name, 3)})));
+		Assert.contains("RIGHT(t0.name, 3)", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.right(r.name, 3)})));
+		Assert.contains("t0.name LIKE 'A%'", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.like(r.name, "A%")})));
+		Assert.contains("t0.name ILIKE 'a%'", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.ilike(r.name, "a%")})));
 	}
 
 	/** `date_trunc`, `to_char` and `gen_random_uuid` are PostgreSQL's own; `RANDOM()` is not. */
@@ -72,7 +72,7 @@ class DbFunctionTests extends TestCase {
 	}
 
 	function testCastAndNow_NowRenderOnPostgres() {
-		Assert.contains("CAST(t1.amount AS INTEGER)",
+		Assert.contains("CAST(t0.amount AS INTEGER)",
 			Pg(Query.select(FunctionRow).Select(r -> {v: (Sql.castTo(r.amount, SqlInt) : Int)})));
 		Assert.contains("NOW()", Pg(Query.select(FunctionRow).Select(r -> {v: Sql.now()})));
 	}
@@ -84,8 +84,8 @@ class DbFunctionTests extends TestCase {
 			total: a.sum(r -> r.amount).filter(r -> r.amount > 0)
 		}));
 
-		Assert.contains("COUNT(*) FILTER (WHERE t1.amount > 0)", sql);
-		Assert.contains("SUM(t1.amount) FILTER (WHERE t1.amount > 0)", sql);
+		Assert.contains("COUNT(*) FILTER (WHERE t0.amount > 0)", sql);
+		Assert.contains("SUM(t0.amount) FILTER (WHERE t0.amount > 0)", sql);
 	}
 
 	function testArray_Functions() {

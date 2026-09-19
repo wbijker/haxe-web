@@ -10,7 +10,7 @@ import codequery.testing.TestCase;
 
 /** The entity `InsertValidationTests.cs` declares: a person whose columns constrain something. */
 @tableName("person")
-class Person {
+class ValidatedPerson {
 	public var id:Int = 0;
 
 	// A string is a nullable column unless the entity says otherwise, so NOT NULL is stated.
@@ -37,7 +37,7 @@ class Person {
 	is "builds without throwing".
 **/
 class InsertValidationTests extends TestCase {
-	static final people:DbTable<Person> = Query.table(Person, "person");
+	static final people:DbTable<ValidatedPerson> = Query.table(ValidatedPerson, "person");
 
 	static function Checked():InsertStrategy {
 		final strategy = new InsertStrategy();
@@ -45,8 +45,8 @@ class InsertValidationTests extends TestCase {
 		return strategy;
 	}
 
-	static function Valid():Person {
-		final person = new Person();
+	static function Valid():ValidatedPerson {
+		final person = new ValidatedPerson();
 		person.name = "Ada";
 		person.nickname = null;
 		person.rate = 12.50;
@@ -70,7 +70,7 @@ class InsertValidationTests extends TestCase {
 
 		Assert.contains("table     person", message);
 		Assert.contains("column    name (VarChar(10)", message);
-		Assert.contains("property  Person.name", message);
+		Assert.contains("property  ValidatedPerson.name", message);
 		Assert.contains("value     '", message);
 		Assert.contains("reason", message);
 		Assert.contains("11 characters and the column holds 10", message);
@@ -164,7 +164,7 @@ class InsertValidationTests extends TestCase {
 
 	function testAValidRowSaysNothing() {
 		final rows = [for (i in 1...101) {
-			final person = new Person();
+			final person = new ValidatedPerson();
 			person.name = 'n$i';
 			person.nickname = i % 2 == 0 ? null : "nick";
 			person.rate = 99.99;

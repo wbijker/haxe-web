@@ -41,13 +41,16 @@ class ColumnsBuilder {
 			case t: Context.error('${t.toString()} is not an entity class', Context.currentPos());
 		}
 
-		final key = row.pack.concat([row.name]).join(".") + "#" + index;
+		// Two modules may each declare a `Row`; the module is part of the name so they stay apart.
+		final module = row.module.split(".").pop();
+		final within = module == row.name ? "" : module + "_";
+		final key = row.module + "." + row.name + "#" + index;
 		final known = defined.get(key);
 		if (known != null) {
 			return known;
 		}
 
-		final path:TypePath = {pack: row.pack, name: row.name + "Columns" + (index == 0 ? "" : Std.string(index))};
+		final path:TypePath = {pack: row.pack, name: within + row.name + "Columns" + (index == 0 ? "" : Std.string(index))};
 		defined.set(key, path);
 
 		// A second compilation pass over the same source reaches this with the type already defined.
@@ -136,9 +139,13 @@ class ColumnsBuilder {
 			case _: null;
 		}
 
-		// `@dbColumnPrecision(p, s)` makes a number a DECIMAL, which is what fixes its size.
-		final precision = switch field.meta.extract("dbColumnPrecision") {
-			case [{params: [{expr: EConst(CInt(p, _))}, {expr: EConst(CInt(s, _))}]}]: {p: Std.parseInt(p), s: Std.parseInt(s)};
+		// How exact a decimal is — `@columnPrecision(12, 4)`, C#'s `[DbColumnPrecision(12, 4)]`, also
+		// spelled `@dbColumnPrecision`; the scale defaults to none, which is what `DECIMAL(p)` means.
+		final stated = field.meta.extract("columnPrecision").concat(field.meta.extract("dbColumnPrecision"));
+		final precision = switch stated {
+			case [{params: [{expr: EConst(CInt(p, _))}]}]: {p: Std.parseInt(p), s: 0};
+			case [{params: [{expr: EConst(CInt(p, _))}, {expr: EConst(CInt(s, _))}]}]:
+				{p: Std.parseInt(p), s: Std.parseInt(s)};
 			case _: null;
 		}
 

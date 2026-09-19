@@ -70,6 +70,8 @@ class SqlExpressionWalker {
 
 		final composite = Std.downcast(cast e, ObjectConstSqlExpression);
 		if (composite != null) return visitor.OnObjectConst(composite);
+		final distinct = Std.downcast(cast e, DistinctSqlExpression);
+		if (distinct != null) return visitor.OnDistinct(distinct);
 
 		throw 'No visitor case for ${Type.getClassName(Type.getClass(e))}';
 	}

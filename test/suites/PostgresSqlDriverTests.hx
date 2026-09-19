@@ -60,7 +60,7 @@ class PostgresSqlDriverTests extends TestCase {
 			.SelectAggregation(agg -> {count: agg.count()})
 			.ToExpression());
 
-		Assert.contains("GROUP BY t1.authorId", sql);
+		Assert.contains("GROUP BY t0.authorId", sql);
 		Assert.contains("COUNT(*)", sql);
 	}
 
@@ -131,20 +131,20 @@ class PostgresSqlDriverTests extends TestCase {
 			.ToExpression());
 
 		Assert.contains("COUNT(*)", sql);
-		Assert.contains("MAX(t1.publishedYear)", sql);
-		Assert.contains("MIN(t1.publishedYear)", sql);
+		Assert.contains("MAX(t0.publishedYear)", sql);
+		Assert.contains("MIN(t0.publishedYear)", sql);
 	}
 
 	function testBinaryOperatorInProjection() {
 		final sql = driver.ToSql(Query.select(Book).Select(b -> {nextYear: b.publishedYear + 1}).ToExpression());
 
-		Assert.contains("t1.publishedYear + 1", sql);
+		Assert.contains("t0.publishedYear + 1", sql);
 	}
 
 	function testStringFunctions() {
 		final sql = driver.ToSql(Query.select(Book).Select(b -> {upper: Sql.upper(b.title)}).ToExpression());
 
-		Assert.contains("UPPER(t1.title)", sql);
+		Assert.contains("UPPER(t0.title)", sql);
 	}
 
 	function testDateTimeProperties() {
@@ -154,9 +154,9 @@ class PostgresSqlDriverTests extends TestCase {
 			day: Sql.datePart("DAY", b.publishedDate)
 		}).ToExpression());
 
-		Assert.contains("EXTRACT(YEAR FROM t1.publishedDate)", sql);
-		Assert.contains("EXTRACT(MONTH FROM t1.publishedDate)", sql);
-		Assert.contains("EXTRACT(DAY FROM t1.publishedDate)", sql);
+		Assert.contains("EXTRACT(YEAR FROM t0.publishedDate)", sql);
+		Assert.contains("EXTRACT(MONTH FROM t0.publishedDate)", sql);
+		Assert.contains("EXTRACT(DAY FROM t0.publishedDate)", sql);
 	}
 
 	function testDateTimeTimeProperties() {
@@ -166,9 +166,9 @@ class PostgresSqlDriverTests extends TestCase {
 			second: Sql.datePart("SECOND", b.publishedDate)
 		}).ToExpression());
 
-		Assert.contains("EXTRACT(HOUR FROM t1.publishedDate)", sql);
-		Assert.contains("EXTRACT(MINUTE FROM t1.publishedDate)", sql);
-		Assert.contains("EXTRACT(SECOND FROM t1.publishedDate)", sql);
+		Assert.contains("EXTRACT(HOUR FROM t0.publishedDate)", sql);
+		Assert.contains("EXTRACT(MINUTE FROM t0.publishedDate)", sql);
+		Assert.contains("EXTRACT(SECOND FROM t0.publishedDate)", sql);
 	}
 
 	function testDateTimeDayOfWeekAndDayOfYear() {
@@ -177,8 +177,8 @@ class PostgresSqlDriverTests extends TestCase {
 			dayOfYear: Sql.datePart("DOY", b.publishedDate)
 		}).ToExpression());
 
-		Assert.contains("EXTRACT(DOW FROM t1.publishedDate)", sql);
-		Assert.contains("EXTRACT(DOY FROM t1.publishedDate)", sql);
+		Assert.contains("EXTRACT(DOW FROM t0.publishedDate)", sql);
+		Assert.contains("EXTRACT(DOY FROM t0.publishedDate)", sql);
 	}
 
 	function testDateTimeDate() {
@@ -192,9 +192,9 @@ class PostgresSqlDriverTests extends TestCase {
 			plusDay: Sql.dateAdd(b.publishedDate, 3, "days")
 		}).ToExpression());
 
-		Assert.contains("t1.publishedDate + INTERVAL '1 years'", sql);
-		Assert.contains("t1.publishedDate + INTERVAL '2 months'", sql);
-		Assert.contains("t1.publishedDate + INTERVAL '3 days'", sql);
+		Assert.contains("t0.publishedDate + INTERVAL '1 years'", sql);
+		Assert.contains("t0.publishedDate + INTERVAL '2 months'", sql);
+		Assert.contains("t0.publishedDate + INTERVAL '3 days'", sql);
 	}
 
 	function testDateTimeAddTimeMethods() {
@@ -204,9 +204,9 @@ class PostgresSqlDriverTests extends TestCase {
 			plusSeconds: Sql.dateAdd(b.publishedDate, 45, "seconds")
 		}).ToExpression());
 
-		Assert.contains("t1.publishedDate + INTERVAL '4 hours'", sql);
-		Assert.contains("t1.publishedDate + INTERVAL '30 minutes'", sql);
-		Assert.contains("t1.publishedDate + INTERVAL '45 seconds'", sql);
+		Assert.contains("t0.publishedDate + INTERVAL '4 hours'", sql);
+		Assert.contains("t0.publishedDate + INTERVAL '30 minutes'", sql);
+		Assert.contains("t0.publishedDate + INTERVAL '45 seconds'", sql);
 	}
 
 	function testDateTimeInWhereClause() {

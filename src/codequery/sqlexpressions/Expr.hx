@@ -78,6 +78,16 @@ class Expr {
 		return new SqlFunctionExpression(name, arguments, true);
 	}
 
+	/** An ordered-set aggregate: `name(args) WITHIN GROUP (ORDER BY key)`. */
+	public static function withinGroup(name:String, arguments:Array<ISqlExpression>, key:ISqlExpression):SqlFunctionExpression {
+		return new SqlFunctionExpression(name, arguments, false, [new OrderByExpression(key, true)]);
+	}
+
+	/** `DISTINCT x` in front of a projected member. */
+	public static function distinct(value:ISqlExpression):DistinctSqlExpression {
+		return new DistinctSqlExpression(value);
+	}
+
 	public static function castTo(value:ISqlExpression, type:SqlType):SqlCastExpression {
 		return new SqlCastExpression(value, type);
 	}

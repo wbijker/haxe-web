@@ -22,6 +22,27 @@ class WindowFunctionExpression implements ISqlExpression {
 		this.Over = over;
 	}
 
+	/** The partition of a window written out here; empty for a named one, as in the C#. */
+	public var PartitionBy(get, never):Array<ISqlExpression>;
+
+	function get_PartitionBy():Array<ISqlExpression> {
+		return Over == null ? [] : Over.PartitionBy;
+	}
+
+	/** The ordering of a window written out here; empty for a named one. */
+	public var OrderBy(get, never):Array<OrderByExpression>;
+
+	function get_OrderBy():Array<OrderByExpression> {
+		return Over == null ? [] : Over.OrderBy;
+	}
+
+	/** The frame of a window written out here, if it has one. */
+	public var Frame(get, never):Null<WindowFrame>;
+
+	function get_Frame():Null<WindowFrame> {
+		return Over == null ? null : Over.Frame;
+	}
+
 	/** The same function, read over a window the statement named. */
 	public function OverWindow(window:NamedWindowSqlSource):WindowFunctionExpression {
 		return new WindowFunctionExpression(Function, Arguments, window, null);

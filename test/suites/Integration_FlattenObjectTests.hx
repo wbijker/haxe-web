@@ -89,19 +89,19 @@ class Integration_FlattenObjectTests extends TestCase {
 
 	function testAFieldSelected_IsItsColumn() {
 		Assert.contains(
-			"SELECT t1.baseline_amount FROM flat_parts AS t1",
+			"SELECT t0.baseline_amount FROM flat_parts AS t0",
 			Sql(Query.select(FlatPart).Select(r -> r.baseline.amount).ToExpression()));
 	}
 
 	function testAFieldSelectedIntoAnAnonymousRow_IsItsColumn() {
 		Assert.contains(
-			"t1.baseline_amount AS amount",
+			"t0.baseline_amount AS amount",
 			Sql(Query.select(FlatPart).Select(r -> {name: r.name, amount: r.baseline.amount}).ToExpression()));
 	}
 
 	function testAFieldSelectedIntoATypedRow_IsItsColumn() {
 		Assert.contains(
-			"t1.baseline_amount AS amount",
+			"t0.baseline_amount AS amount",
 			Sql(Query.select(FlatPart).Select(r -> ({name: r.name, amount: r.baseline.amount} : FlatPriced)).ToExpression()));
 	}
 
@@ -119,7 +119,7 @@ class Integration_FlattenObjectTests extends TestCase {
 
 	function testAFieldAggregated_IsItsColumn() {
 		Assert.contains(
-			"SUM(t1.baseline_amount)",
+			"SUM(t0.baseline_amount)",
 			Sql(Query.select(FlatPart).SelectAggregation(a -> {total: a.sum(r -> r.baseline.amount)}).ToExpression()));
 	}
 
@@ -175,7 +175,7 @@ class Integration_FlattenObjectTests extends TestCase {
 
 		// Selected on its own it is its fields again, under their own names — which is what a
 		// reader needs to hand back a cost rather than two loose columns.
-		Assert.contains("SELECT t1.cost_amount AS amount, t1.cost_currency AS currency", sql);
+		Assert.contains("SELECT t0.cost_amount AS amount, t0.cost_currency AS currency", sql);
 	}
 
 	function testReducedAfterTheJoin_SaysTheSameThingAsReducingAtIt() {
@@ -230,9 +230,9 @@ class Integration_FlattenObjectTests extends TestCase {
 
 	function testAnObjectAQueryCarriedUp_IsStillSelectedAsItsColumns() {
 		Assert.contains(
-			"SELECT t1.cost_amount AS amount, t1.cost_currency AS currency "
-			+ "FROM (SELECT t2.name AS name, t2.baseline_amount AS cost_amount, "
-			+ "t2.baseline_currency AS cost_currency FROM flat_parts AS t2) AS t1",
+			"SELECT t0.cost_amount AS amount, t0.cost_currency AS currency "
+			+ "FROM (SELECT t1.name AS name, t1.baseline_amount AS cost_amount, "
+			+ "t1.baseline_currency AS cost_currency FROM flat_parts AS t1) AS t0",
 			Sql(Query.select(FlatPart).Select(r -> {name: r.name, cost: r.baseline}).Select(x -> x.cost).ToExpression()));
 	}
 
@@ -243,8 +243,8 @@ class Integration_FlattenObjectTests extends TestCase {
 	function testObjectsOfEveryKindInOneProjection_EachSelectTheirOwnWay() {
 		// Spread over columns, and built by the query — side by side, each read the way it is kept.
 		Assert.contains(
-			"SELECT t1.baseline_amount AS owned_amount, t1.baseline_currency AS owned_currency, "
-			+ "t1.price AS built_amount, 'ZAR' AS built_currency FROM flat_parts AS t1",
+			"SELECT t0.baseline_amount AS owned_amount, t0.baseline_currency AS owned_currency, "
+			+ "t0.price AS built_amount, 'ZAR' AS built_currency FROM flat_parts AS t0",
 			Sql(Query.select(FlatPart)
 				.Select(r -> {
 					owned: r.baseline,
@@ -257,13 +257,13 @@ class Integration_FlattenObjectTests extends TestCase {
 
 	function testTheObjectItselfSelected_IsSelectedAsItsColumns() {
 		Assert.contains(
-			"SELECT t1.baseline_amount AS amount, t1.baseline_currency AS currency FROM flat_parts AS t1",
+			"SELECT t0.baseline_amount AS amount, t0.baseline_currency AS currency FROM flat_parts AS t0",
 			Sql(Query.select(FlatPart).Select(r -> r.baseline).ToExpression()));
 	}
 
 	function testTheObjectSelectedUnderAnotherName_TakesThatNameToItsColumns() {
 		Assert.contains(
-			"SELECT t1.name AS name, t1.baseline_amount AS cost_amount, t1.baseline_currency AS cost_currency FROM flat_parts AS t1",
+			"SELECT t0.name AS name, t0.baseline_amount AS cost_amount, t0.baseline_currency AS cost_currency FROM flat_parts AS t0",
 			Sql(Query.select(FlatPart).Select(r -> {name: r.name, cost: r.baseline}).ToExpression()));
 	}
 

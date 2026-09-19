@@ -12,13 +12,18 @@ class NamedWindowSqlSource implements ISqlSource {
 	public final PartitionBy:Array<ISqlExpression>;
 	public final OrderBy:Array<OrderByExpression>;
 
+	/** `ROWS BETWEEN … AND …`, where the window says which rows of the partition are read. */
+	public final Frame:Null<WindowFrame>;
+
 	/** A window is named, and the name is how it is referred to, so the two are the same. */
 	public var Alias(default, null):String;
 
-	public function new(name:String, partitionBy:Array<ISqlExpression>, orderBy:Array<OrderByExpression>) {
+	public function new(name:String, partitionBy:Array<ISqlExpression>, orderBy:Array<OrderByExpression>,
+			?frame:WindowFrame) {
 		this.Name = name;
 		this.Alias = name;
 		this.PartitionBy = partitionBy;
 		this.OrderBy = orderBy;
+		this.Frame = frame;
 	}
 }
