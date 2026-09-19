@@ -43,11 +43,14 @@ class RowCount {
 	/**
 		Running a statement needs a connection, and a query is built without one.
 
-		`DatabaseConfiguration` is where one would come from; nothing implements the executor it
-		wants, because that takes a wire protocol and is a driver's job.
+		A query knows how to be built and rendered and nothing about where it would run — that is
+		`DatabaseConfiguration`'s, and a driver's. Asking a bare query to run is asking the wrong
+		thing, not asking for something that does not exist.
 	**/
 	public static function NeedsAConnection(what:String, instead:String):Int {
-		throw '$what runs the statement, so it needs a connection to run it against. Nothing '
-			+ 'implements IDatabaseExecutor yet; $instead gives the statement it would run.';
+		throw '$what runs the statement, so it needs a connection to run it against. Hand it to a '
+			+ 'DatabaseConfiguration built on a driver that has one — DatabaseConfiguration.Of('
+			+ 'new PhpDriver(dsn)).Execute(query.$instead) — or use $instead for the statement '
+			+ 'alone.';
 	}
 }

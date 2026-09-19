@@ -58,6 +58,6 @@ types against this port. Worked in batches of ten, top down.
 
 ## Execution
 
-- [~] 45. A driver that runs what it renders — the seam is there (`IDatabaseExecutor`,
-  `DatabaseConfiguration`, `Statement`), and nothing implements it: that takes a connection and a
-  wire protocol, which is a driver's job and needs a database to work against.
+- [x] 45. A driver that runs what it renders — `ISqlTranslator` renders, `ISqlDriver` adds
+  somewhere to send it, and the PHP runtime (`PhpDriver`, `PdoTranslator`, `PdoExecutor`) runs it
+  through PDO. `RunPhp` is the whole port end to end against an in-memory SQLite database.

@@ -1,4 +1,4 @@
-import codequery.sqldrivers.SqlDriver;
+import codequery.sqldrivers.SqlTranslator;
 import codequery.sqlexpressions.ISqlStatement;
 import sample.Booking;
 import sample.BookingStatus;
@@ -19,7 +19,7 @@ import sample.Unit;
 **/
 class Main {
 	static final db = new SampleDb();
-	static final driver = new SqlDriver();
+	static final driver = new codequery.sqldrivers.SqlTranslator();
 
 	static function main() {
 		// The original opens with SampleDbInitializer.Create, DropAndRecreate and

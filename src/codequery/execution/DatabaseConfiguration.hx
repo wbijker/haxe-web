@@ -1,6 +1,6 @@
 package codequery.execution;
 
-import codequery.sqldrivers.SqlDriver;
+import codequery.sqldrivers.ISqlTranslator;
 import codequery.sqlexpressions.ISqlStatement;
 
 /**
@@ -10,12 +10,17 @@ import codequery.sqlexpressions.ISqlStatement;
 	asking it to run needs the second half.
 **/
 class DatabaseConfiguration {
-	public final Driver:SqlDriver;
+	public final Driver:ISqlTranslator;
 	public final Executor:Null<IDatabaseExecutor>;
 
-	public function new(driver:SqlDriver, ?executor:IDatabaseExecutor) {
+	public function new(driver:ISqlTranslator, ?executor:IDatabaseExecutor) {
 		this.Driver = driver;
 		this.Executor = executor;
+	}
+
+	/** The same, taken whole from a driver that carries both halves. */
+	public static function Of(driver:codequery.sqldrivers.ISqlDriver):DatabaseConfiguration {
+		return new DatabaseConfiguration(driver, driver.Executor());
 	}
 
 	/** Renders a statement, with the values that go beside it. */

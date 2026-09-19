@@ -11,3 +11,11 @@
 --main Main
 --php bin/php
 --cmd php bin/php/index.php
+
+--next
+
+# The PHP runtime, end to end: an in-memory database, so it needs nothing set up.
+--class-path src
+--main RunPhp
+--php bin/php-runtime
+--cmd php bin/php-runtime/index.php
