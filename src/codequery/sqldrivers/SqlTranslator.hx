@@ -322,6 +322,11 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 
 		final query = Std.downcast(cast source, QuerySqlSource);
 		if (query != null) {
+			// A query that is nothing but `SELECT * FROM <table>` is that table, and reads better as one.
+			if (query.Query.IsSimpleTableQuery()) {
+				final inner:TableSqlSource = cast query.Query.Source;
+				return '${inner.Table} AS ${Named(query)}';
+			}
 			return '(${Against(query.Query.AllSources(), () -> Statement(query.Query))}) AS ${Named(query)}';
 		}
 

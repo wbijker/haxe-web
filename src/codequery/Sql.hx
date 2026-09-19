@@ -124,4 +124,40 @@ extern class Sql {
 
 	/** `FLOOR(x)`. */
 	public static function floor(value:Float):Float;
+
+	/** `SIGN(x)` — -1, 0 or 1. */
+	public static function sign(value:Float):Int;
+
+	/** `POWER(x, y)`. */
+	public static function power(value:Float, exponent:Float):Float;
+
+	/** `SQRT(x)`. */
+	public static function sqrt(value:Float):Float;
+
+	/** `EXP(x)`. */
+	public static function exp(value:Float):Float;
+
+	/** `LN(x)` — the natural logarithm. */
+	public static function ln(value:Float):Float;
+
+	/** `LOG(x)` — the base-10 logarithm. */
+	public static function log(value:Float):Float;
+
+	/** `GREATEST(a, b, …)`. */
+	public static function greatest<T>(first:T, rest:haxe.extern.Rest<T>):T;
+
+	/** `LEAST(a, b, …)`. */
+	public static function least<T>(first:T, rest:haxe.extern.Rest<T>):T;
+
+	/** `LEFT(s, n)` — the first `n` characters. */
+	public static function left(value:String, length:Int):String;
+
+	/** `RIGHT(s, n)` — the last `n` characters. */
+	public static function right(value:String, length:Int):String;
+
+	/** `RANDOM()`. */
+	public static function random():Float;
+
+	/** `NOW()` — the current timestamp. */
+	public static function now():Date;
 }

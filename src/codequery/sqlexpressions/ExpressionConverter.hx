@@ -414,6 +414,18 @@ class ExpressionConverter {
 			case "round": macro codequery.sqlexpressions.Expr.call("ROUND", ${list(0)});
 			case "ceil": macro codequery.sqlexpressions.Expr.call("CEIL", ${list(0)});
 			case "floor": macro codequery.sqlexpressions.Expr.call("FLOOR", ${list(0)});
+			case "sign": macro codequery.sqlexpressions.Expr.call("SIGN", ${list(0)});
+			case "power": macro codequery.sqlexpressions.Expr.call("POWER", ${list(0)});
+			case "sqrt": macro codequery.sqlexpressions.Expr.call("SQRT", ${list(0)});
+			case "exp": macro codequery.sqlexpressions.Expr.call("EXP", ${list(0)});
+			case "ln": macro codequery.sqlexpressions.Expr.call("LN", ${list(0)});
+			case "log": macro codequery.sqlexpressions.Expr.call("LOG", ${list(0)});
+			case "greatest": macro codequery.sqlexpressions.Expr.call("GREATEST", ${list(0)});
+			case "least": macro codequery.sqlexpressions.Expr.call("LEAST", ${list(0)});
+			case "left": macro codequery.sqlexpressions.Expr.call("LEFT", ${list(0)});
+			case "right": macro codequery.sqlexpressions.Expr.call("RIGHT", ${list(0)});
+			case "random": macro codequery.sqlexpressions.Expr.call("RANDOM", ${list(0)});
+			case "now": macro codequery.sqlexpressions.Expr.call("NOW", ${list(0)});
 
 			case "coalesce": macro codequery.sqlexpressions.Expr.call("COALESCE", ${list(0)});
 			case "nullIf": macro codequery.sqlexpressions.Expr.call("NULLIF", ${list(0)});

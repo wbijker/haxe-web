@@ -113,4 +113,24 @@ class SelectExpression implements ISqlStatement {
 		copy.Percent = Percent;
 		return copy;
 	}
+
+	/** Nothing has been said beyond the source: `SELECT * FROM <source>`. */
+	public function IsEmpty():Bool {
+		return Selection == null
+			&& Where == null
+			&& Joins.length == 0
+			&& OrderBy.length == 0
+			&& GroupBy.length == 0
+			&& Having == null
+			&& Unions.length == 0
+			&& DistinctOn.length == 0
+			&& !IsDistinct
+			&& Limit == null
+			&& Offset == null;
+	}
+
+	/** `SELECT * FROM <table>` and nothing more — which, as a source, is the table itself. */
+	public function IsSimpleTableQuery():Bool {
+		return Std.isOfType(Source, TableSqlSource) && IsEmpty();
+	}
 }
