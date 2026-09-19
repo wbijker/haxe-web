@@ -10,8 +10,8 @@ class Booking {
 	@columnForeignKey("sample.Guest")
 	public var guestId:Int = 0;
 
-	public var checkIn:Date;
-	public var checkOut:Date;
+	public var checkIn:codequery.SqlDate;
+	public var checkOut:codequery.SqlDate;
 	public var status:BookingStatus;
 	public var totalCents:Int = 0;
 	public var refundCents:Int = 0;

@@ -5,8 +5,8 @@ package sample;
 class AvailabilityGap {
 	public var unitId:Int = 0;
 	public var bookingId:Int = 0;
-	public var gapStart:Date;
-	public var gapEnd:Null<Date>;
+	public var gapStart:codequery.SqlDate;
+	public var gapEnd:Null<codequery.SqlDate>;
 	public var gapLength:Null<Float>;
 
 	public function new() {}

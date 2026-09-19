@@ -509,14 +509,14 @@ class ExpressionConverter {
 
 	/** A runtime value, as the constant it will be by the time the statement runs. */
 	public static function Valued(value:Expr):Expr {
-		final factory = Factory(switch Context.typeof(value).follow() {
+		// Unwrapped first: an enum abstract is its underlying number by the time SQL sees it, and
+		// SqlDate is a date.
+		final factory = Factory(switch Context.typeof(value).followWithAbstracts() {
 			case TAbstract(_.get() => {name: "Int"}, _): "constInt";
 			case TAbstract(_.get() => {name: "Float"}, _): "constFloat";
 			case TAbstract(_.get() => {name: "Bool"}, _): "constBool";
 			case TInst(_.get() => {name: "String"}, _): "constString";
 			case TInst(_.get() => {name: "Date"}, _): "constDate";
-			// An enum abstract is its underlying value by the time SQL sees it.
-			case TAbstract(t, _) if (t.get().meta.has(":enum")): "constInt";
 			case t: Context.error('${t.toString()} is not something a column can hold', value.pos);
 		});
 		return macro $factory($value);

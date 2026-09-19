@@ -1,116 +1,180 @@
 import codequery.sqldrivers.SqlDriver;
-import codequery.sqlexpressions.NullsOrdering;
+import codequery.sqlexpressions.ISqlStatement;
+import sample.Booking;
+import sample.BookingStatus;
+import sample.Guest;
+import sample.SampleDb;
+import sample.Unit;
 
+/**
+	`CodeQuery.Sample.Program`, query for query.
+
+	The C# original runs against PostgreSQL and prints the rows: it builds the schema, applies its
+	migrations, seeds three tables, calls its functions and stored procedures, and reads a view.
+	None of that is reachable here — no driver can execute — so each statement is rendered instead,
+	which is the half this port has.
+
+	Where a query of the original cannot be written yet, it is left in place as a comment saying
+	what it needs.
+**/
 class Main {
-	// Built during static initialisation, which is what catches a generated column that is not
-	// ready in time: this type is generated before the columns are.
 	static final db = new SampleDb();
 	static final driver = new SqlDriver();
 
 	static function main() {
-		// A lambda's parameter names a row by position, so a column knows which source it belongs
-		// to without the statement having to be built first.
-		show(db.Deliveries.From().Where(a -> a.id == 12));
+		// The original opens with SampleDbInitializer.Create, DropAndRecreate and
+		// AddMigrationIfSchemaChanged. All three need DatabaseInitializer and the migration
+		// machinery, and a connection to run against.
 
-		show(db.Deliveries.From()
-			.Where(a -> a.status == 6)
-			.OrderBy(a -> a.noteNo)
-			.OrderByDesc(a -> a.id)
-			.Limit(10)
-			.Offset(20));
+		section("A booking's price, which is flattened into its row");
+		// C# names these by shorthand — new { f.Price.Forex, … }; Haxe structures always name a
+		// member, so the names are written out.
+		show(db.Bookings.From()
+			.Select(f -> {forex: f.price.forex, type: f.price.type, zar: f.price.zar})
+			.ToExpression());
 
-		show(db.Deliveries.From()
-			.Distinct(a -> a.fromStoreId)
-			.OrderBy(a -> a.fromStoreId, NullsOrdering.Last));
+		section("Raising those prices by a seventh");
+		show(db.Bookings.Update()
+			.Where(f -> f.price.zar > 100)
+			.Set(g -> g.price.zar, g -> g.price.zar * 1.15)
+			.ToExpression());
 
-		// Joining a table: the condition is written over both rows, in the order they were joined.
-		show2(db.Deliveries.From()
-			.InnerJoin(db.Lines, (d, l) -> d.id == l.deliveryId)
-			.Where((d, l) -> l.quantity > 0)
-			.OrderBy((d, l) -> l.itemCode));
+		// resultC selects f.Price whole — one member standing for the three columns it flattens
+		// into — and resultD sets it whole from a new CurrentObject. A projection here names a row
+		// or a column, not an object between the two, so both are written out member by member.
 
-		// A table joined to itself: two sources, so the same column has to render two ways.
-		show2(db.Deliveries.From()
-			.LeftJoin(db.Deliveries, (a, b) -> a.purchaseOrderId == b.purchaseOrderId && a.id != b.id));
+		section("Every booking");
+		show(db.Bookings.From().ToExpression());
 
-		// Joining a query rather than a table puts it in as a subquery.
-		show2(db.Deliveries.From()
-			.InnerJoin(db.Lines.From().Where(l -> l.quantity > 100), (d, l) -> d.id == l.deliveryId));
+		section("Confirmed stays, with their unit and guest");
+		// The original writes this with db.Block, which names each source as it is joined. The
+		// fluent form its own comment gives is the one here: every clause takes every source and
+		// names them by position.
+		show(db.Bookings.From()
+			.InnerJoin(db.Units, (b, u) -> u.id == b.unitId)
+			.InnerJoin(db.Guests, (b, u, g) -> g.id == b.guestId)
+			.Where((b, u, g) -> b.status == BookingStatus.Confirmed)
+			.OrderBy((b, u, g) -> b.checkIn)
+			.Select((b, u, g) -> {
+				guest: g.name,
+				unit: u.name,
+				checkIn: b.checkIn,
+				checkOut: b.checkOut,
+				totalCents: b.totalCents,
+				sleeps: u.sleeps
+			})
+			.ToExpression());
 
-		show2(db.Deliveries.From().CrossJoin(db.Lines));
+		section("Seeding");
+		// C# inserts arrays and reads the generated keys back with PopulatePrimaryKey. One row at a
+		// time is what this port has, and nothing reads a key back, because nothing runs.
+		final lovelace = new Guest(0);
+		lovelace.name = "Ada Lovelace";
+		lovelace.email = "ada@example.com";
+		show(db.Guests.Insert(lovelace));
 
-		// Joining on: each join adds a row, and every lambda after it takes one more parameter.
-		Sys.println("");
-		Sys.println(driver.ToSql(db.Deliveries.From()
-			.InnerJoin(db.Lines, (d, l) -> d.id == l.deliveryId)
-			.InnerJoin(db.Stores, (d, l, s) -> d.fromStoreId == s.id)
-			.Where((d, l, s) -> s.code == "JHB")
-			.ToExpression()));
+		final seaside = new Unit(0);
+		seaside.name = "Seaside cottage";
+		seaside.sleeps = 4;
+		seaside.baseRateCents = 12000;
+		seaside.cleaningFeeCents = 3500;
+		show(db.Units.Insert(seaside));
 
-		Sys.println(driver.ToSql(db.Deliveries.From()
-			.InnerJoin(db.Lines, (d, l) -> d.id == l.deliveryId)
-			.InnerJoin(db.Stores, (d, l, from) -> d.fromStoreId == from.id)
-			.LeftJoin(db.Stores, (d, l, from, to) -> d.toStoreId == to.id)
-			.Where((d, l, from, to) -> from.code != to.code && l.quantity > 0)
-			.OrderBy((d, l, from, to) -> to.name)
-			.Limit(50)
-			.ToExpression()));
+		final stay = new Booking(0);
+		stay.unitId = 1;
+		stay.guestId = 1;
+		stay.status = BookingStatus.Confirmed;
+		stay.checkIn = new Date(2026, 2, 9, 0, 0, 0);
+		stay.checkOut = new Date(2026, 2, 16, 0, 0, 0);
+		stay.totalCents = 84000;
+		show(db.Bookings.Insert(stay));
 
-		// Counting. A query that counts what it reads selects COUNT(*) in place of its rows.
-		Sys.println("");
-		Sys.println(driver.ToSql(db.Deliveries.From().Where(a -> a.id > 12).OrderBy(a -> a.id).CountExpression()));
-		// One narrowed by DISTINCT or a limit has to be counted from the outside.
-		Sys.println(driver.ToSql(db.Deliveries.From().Distinct(a -> a.fromStoreId).CountExpression()));
-		Sys.println(driver.ToSql(db.Deliveries.From().Limit(10).CountExpression()));
+		section("What follows each stay in the same unit");
+		// A left join onto the same table: two handles of one entity are two sources, so a query can
+		// read a booking beside another booking.
+		show(db.Bookings.From()
+			.InnerJoin(db.Units, (b, u) -> u.id == b.unitId)
+			.LeftJoin(db.Bookings, (b, u, next) -> next.unitId == b.unitId && next.checkIn >= b.checkOut)
+			.Where((b, u, next) -> b.status == BookingStatus.Confirmed)
+			.OrderBy((b, u, next) -> u.name)
+			.Select((b, u, next) -> {unit: u.name, checkOut: b.checkOut, nextIn: next.checkIn})
+			.ToExpression());
 
-		// Projection: a structure names each member, and the query carries that shape from here on.
-		Sys.println("");
-		Sys.println(driver.ToSql(db.Deliveries.From()
-			.Where(a -> a.status == 6)
-			.Select(a -> {store: a.fromStoreId, note: a.noteNo})
-			.ToExpression()));
+		section("Back to a known state — bookings first, they point at the other two");
+		show(db.Bookings.Delete().ToExpression());
+		show(db.Units.Delete().ToExpression());
+		show(db.Guests.Delete().ToExpression());
 
-		// Reduce: naming a row selects that row's columns and keeps its type.
-		Sys.println(driver.ToSql(db.Deliveries.From()
-			.InnerJoin(db.Lines, (d, l) -> d.id == l.deliveryId)
-			.Reduce((d, l) -> l)
-			.ToExpression()));
+		section("How many bookings there are");
+		show(db.Bookings.From().SelectAggregation(a -> {AA: a.count()}).ToExpression());
 
-		// GROUP BY, with the aggregates of each group.
-		Sys.println(driver.ToSql(db.Lines.From()
-			.GroupBy(a -> a.deliveryId)
-			.Having(a -> a.quantity > 0)
-			.SelectAggregation(a -> {lines: a.count(), units: a.sum(r -> r.quantity), kinds: a.countDistinct(r -> r.itemCode)})
-			.ToExpression()));
+		// db.Parts.Upsert(part).OnConflict(…).Update(…) needs ON CONFLICT, which this port has not
+		// reached.
 
-		// A window arrives as an extra row, which is how the projection names it.
-		Sys.println(driver.ToSql(db.Lines.From()
-			.Window(w -> w.PartitionBy(a -> a.deliveryId).OrderBy(a -> a.id))
-			.SelectAggregation((a, w) -> {running: a.sum(r -> r.quantity).over(w)})
-			.ToExpression()));
+		section("A part");
+		final widget = new sample.Part(0);
+		widget.description = "Widget";
+		widget.engPartNo = "1234";
+		widget.manufacturerPartNo = "MK-124P";
+		widget.supplierPartNo = "SUP-124";
+		show(db.Parts.Insert(widget));
 
-		// EXISTS, correlated with the outer row.
-		Sys.println(driver.ToSql(db.Deliveries.From()
-			.WhereExists(db.Lines, (d, l) -> l.deliveryId == d.id && l.quantity > 0)
-			.ToExpression()));
+		section("Bookings with their unit and guest");
+		// C# reaches the joins through Booking.WithUnit and Booking.WithGuest, which declare on the
+		// entity what they join on. Those helpers are not ported, so the conditions are written out.
+		show(db.Bookings.From()
+			.InnerJoin(db.Units, (b, u) -> u.id == b.unitId)
+			.InnerJoin(db.Guests, (b, u, g) -> g.id == b.guestId)
+			.Select((b, u, g) -> {
+				bookingId: b.id,
+				unitName: u.name,
+				guestName: g.name,
+				checkIn: b.checkIn,
+				checkOut: b.checkOut,
+				status: b.status,
+				totalCents: b.totalCents
+			})
+			.ToExpression());
 
-		Sys.println(driver.ToSql(db.Deliveries.From()
-			.WhereNotExists(db.Lines, (d, l) -> l.deliveryId == d.id)
-			.ToExpression()));
+		section("One unit's bookings, counted");
+		// C# asks for the count directly. Counting runs the query, so what is here is the statement
+		// that would do it.
+		show(db.Bookings.From().Where(b -> b.unitId == 10).CountExpression());
 
-		Sys.println("");
+		// fn_stay_cost, fn_is_available, sp_reserve and sp_cancel_booking are the rest of the
+		// original. Each needs DbFunction or DbStoredProc, and a connection to call it on.
+
+		// The gaps between stays read vw_availability_gaps, which needs DbView — and the view is
+		// itself a query, defined with LEAD(), a window function this port does not have either.
+
+		section("The bookings that stand");
+		show(db.Bookings.From()
+			.InnerJoin(db.Guests, (b, g) -> g.id == b.guestId)
+			.InnerJoin(db.Units, (b, g, u) -> u.id == b.unitId)
+			.Where((b, g, u) -> b.status == BookingStatus.Confirmed)
+			.OrderBy((b, g, u) -> b.checkIn)
+			.Select((b, g, u) -> {
+				guest: g.name,
+				unit: u.name,
+				checkIn: b.checkIn,
+				checkOut: b.checkOut,
+				totalCents: b.totalCents
+			})
+			.ToExpression());
+
+		section("What running one would say");
 		try {
-			db.Deliveries.From().Count();
+			db.Bookings.From().Count();
 		} catch (e:String) {
-			Sys.println('Count(): $e');
+			Sys.println(e);
 		}
 	}
 
-	static function show(query:codequery.queries.ISelectQuery<model.Delivery>) {
-		Sys.println(driver.ToSql(query.ToExpression()));
+	static function section(title:String) {
+		Sys.println('\n-- $title');
 	}
 
-	static function show2<A, B>(query:codequery.queries.ISelectQuery2<A, B>) {
-		Sys.println(driver.ToSql(query.ToExpression()));
+	static function show(statement:ISqlStatement) {
+		Sys.println(driver.ToSql(statement));
 	}
 }
