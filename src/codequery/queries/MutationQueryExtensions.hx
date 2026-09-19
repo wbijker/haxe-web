@@ -21,6 +21,15 @@ class MutationQueryExtensions {
 	**/
 	public static macro function Set(self:Expr, column:Expr, value:Expr):Expr {
 		final rows = ExpressionConverter.EntitiesOf(self);
+		// An owned object assigned whole is every column it is spread over, assigned one by one.
+		final spread = ExpressionConverter.ConvertObjectAssignment(column, value, rows);
+		if (spread != null) {
+			var assigned = Impl(self);
+			for (each in spread) {
+				assigned = macro $assigned.SetColumn(${each.column}, ${each.value});
+			}
+			return ExpressionConverter.AnsweringMutation(assigned, self);
+		}
 		// A column is assigned on the target, so it names that row alone; what it is assigned may
 		// name every row the statement has.
 		final target = ExpressionConverter.ConvertColumn(column, [rows[0]]);

@@ -642,15 +642,19 @@ class ExpressionConverter {
 		return switch e.expr {
 			// A structure names each member; the names are what the columns come back as.
 			case EObjectDecl(fields):
-				final members = {
-					expr: EArrayDecl([
-						for (field in fields) {
-							final value = ToSqlExpression(field.expr, bound, rows);
-							macro new codequery.sqlexpressions.ProjectionMember($v{field.field}, $value);
-						}
-					]),
-					pos: e.pos
-				};
+				final all:Array<Expr> = [];
+				for (field in fields) {
+					for (member in ProjectionMembersOf(field.field, field.expr, bound, rows)) {
+						all.push(member);
+					}
+				}
+				final members = {expr: EArrayDecl(all), pos: e.pos};
+				macro new codequery.sqlexpressions.ProjectionSqlExpression($members);
+
+			// An owned object on its own — `r -> r.baseline` — is the columns it is spread over,
+			// each under its own name, which is what puts it back together on the way in.
+			case EField(_, _, _) if (ObjectLeaves(e, bound, rows) != null):
+				final members = {expr: EArrayDecl(ProjectionMembersOf("", e, bound, rows)), pos: e.pos};
 				macro new codequery.sqlexpressions.ProjectionSqlExpression($members);
 
 			// A row on its own selects that row's columns.
@@ -1193,6 +1197,171 @@ class ExpressionConverter {
 			Context.error('Expected a source of one row type, got ${rows.length}', source.pos);
 		}
 		return rows[0];
+	}
+
+	// ---- owned objects named whole ----------------------------------------------------------------
+	//
+	// An object spread over columns — `[ColumnObject(Flatten)]` in C#, any object-typed member here —
+	// has no column of its own. Naming a field of it names a column, and that is handled above.
+	// Naming the object itself is what these handle: in a projection it is every column it is spread
+	// over, under the member's name (`cost_amount`, or `amount` where it stands alone); assigned
+	// whole, it is every one of those columns assigned.
+
+	/**
+		The members one field of a projection selects — usually one, several for an owned object,
+		and several again for an object the projection builds (`cost: {amount: r.price, …}`), whose
+		members are named for it as a flattened object's columns are.
+	**/
+	static function ProjectionMembersOf(name:String, value:Expr, bound:Map<String, Int>, rows:Array<Type>):Array<Expr> {
+		final value = Unwrap(value);
+		final prefix = name == "" ? "" : name + ColumnsBuilder.Separator;
+
+		switch value.expr {
+			case EObjectDecl(fields):
+				final members:Array<Expr> = [];
+				for (field in fields) {
+					for (member in ProjectionMembersOf(prefix + field.field, field.expr, bound, rows)) {
+						members.push(member);
+					}
+				}
+				return members;
+			case _:
+		}
+
+		final leaves = ObjectLeaves(value, bound, rows);
+		if (leaves == null) {
+			final converted = ToSqlExpression(value, bound, rows);
+			return [macro new codequery.sqlexpressions.ProjectionMember($v{name}, $converted)];
+		}
+
+		final reached = PathOf(value, bound);
+		return [
+			for (leaf in leaves) {
+				final column = ColumnFor(rows[reached.row], reached.row, reached.path.concat(leaf), value.pos);
+				final member = prefix + leaf.join(ColumnsBuilder.Separator);
+				macro new codequery.sqlexpressions.ProjectionMember($v{member}, $column);
+			}
+		];
+	}
+
+	/**
+		The paths to every column an expression naming an owned object is spread over, or null
+		where the expression is not one — a value, a column, or nothing of the row's.
+	**/
+	static function ObjectLeaves(e:Expr, bound:Map<String, Int>, rows:Array<Type>):Null<Array<Array<String>>> {
+		final reached = PathOf(Unwrap(e), bound);
+		if (reached == null || reached.path.length == 0) {
+			return null;
+		}
+		final row = rows[reached.row];
+		if (FieldNamed(row, reached.path[0]) == null) {
+			return null;
+		}
+		return LeavesOf(MemberTypeOf(reached.path, row, e.pos), []);
+	}
+
+	/** The columns a type is spread over, as paths of field names — or null where it is a value. */
+	static function LeavesOf(type:Type, visited:Array<String>):Null<Array<Array<String>>> {
+		final held = switch type.follow() {
+			case TInst(t, _):
+				final cls = t.get();
+				final path = cls.pack.concat([cls.name]).join(".");
+				(path == "String" || path == "Date" || visited.indexOf(path) >= 0) ? null : cls;
+			case _: null;
+		}
+		if (held == null) {
+			return null;
+		}
+
+		final leaves:Array<Array<String>> = [];
+		final name = held.pack.concat([held.name]).join(".");
+		for (field in held.fields.get()) {
+			if (!field.isPublic || !field.kind.match(FVar(AccNormal | AccNo, _))) {
+				continue;
+			}
+			final nested = LeavesOf(field.type, visited.concat([name]));
+			if (nested == null) {
+				leaves.push([field.name]);
+			} else {
+				for (leaf in nested) {
+					leaves.push([field.name].concat(leaf));
+				}
+			}
+		}
+		return leaves;
+	}
+
+	/**
+		A `Set` whose column is an owned object, as one assignment per column it is spread over —
+		or null where the column is a plain one and `Set` carries on as it does.
+
+		The value is an object written out, `g -> {forex: g.price.forex, …}`, and every field has a
+		column: one left unsaid would keep what it held, which is not what assigning a whole object
+		means, so it is refused by name.
+	**/
+	public static function ConvertObjectAssignment(column:Expr, value:Expr, rows:Array<Type>):Null<Array<{column:Expr, value:Expr}>> {
+		final selector = ResolveLambda(column);
+		final fn = switch selector.expr {
+			case EFunction(_, f): f;
+			case _: return null;
+		}
+		final bound = new Map<String, Int>();
+		for (index => arg in fn.args) {
+			bound.set(arg.name, index);
+		}
+		final target = Unwrap(fn.expr);
+		final leaves = ObjectLeaves(target, bound, [rows[0]]);
+		if (leaves == null) {
+			return null;
+		}
+
+		final assigned = switch ResolveLambda(value).expr {
+			case EFunction(_, f) if (f.args.length == rows.length): f;
+			case _: Context.error("Assigning a whole object takes a lambda answering with it written out, e.g. g -> {zar: g.price.zar * 1.15, …}",
+					value.pos);
+		}
+		final assignedBound = new Map<String, Int>();
+		for (index => arg in assigned.args) {
+			assignedBound.set(arg.name, index);
+		}
+		final reached = PathOf(target, bound);
+		final object = reached.path.join(".");
+
+		return [
+			for (leaf in leaves) {
+				final given = FieldOfDecl(Unwrap(assigned.expr), leaf);
+				if (given == null) {
+					Context.error('Assigning $object whole leaves ${object}.${leaf.join(".")} unsaid; every field of it has a column, so every field is given',
+						value.pos);
+				}
+				{
+					column: ColumnFor(rows[reached.row], reached.row, reached.path.concat(leaf), target.pos),
+					value: ToSqlExpression(given, assignedBound, rows)
+				}
+			}
+		];
+	}
+
+	/** The expression an object written out gives a field at `path`, or null where it is left out. */
+	static function FieldOfDecl(decl:Expr, path:Array<String>):Null<Expr> {
+		var current = Unwrap(decl);
+		for (step in path) {
+			final fields = switch current.expr {
+				case EObjectDecl(fields): fields;
+				case _: return null;
+			}
+			var found:Null<Expr> = null;
+			for (field in fields) {
+				if (field.field == step) {
+					found = field.expr;
+				}
+			}
+			if (found == null) {
+				return null;
+			}
+			current = Unwrap(found);
+		}
+		return current;
 	}
 	#end
 }
