@@ -1,0 +1,5 @@
+# The ported C# test suite, on the eval target. Filter with `haxe test.hxml -- <suite name>`.
+--class-path src
+--class-path test
+--main Tests
+--interp
