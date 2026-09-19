@@ -96,15 +96,20 @@ class ExpressionConverter {
 				final r = ToSqlExpression(right, bound, rows);
 				macro $factory($l, $r);
 
-			case EField(owner, field, _):
-				switch Unwrap(owner).expr {
-					case EConst(CIdent(name)) if (bound.exists(name)):
-						final index = bound[name];
-						final row = rows[index];
-						ColumnsBuilder.Member(ColumnsBuilder.Of(row, index), ColumnOf(field, row, e.pos));
-					case _:
-						Context.error('Only a column of a row this lambda is written over can be used here', e.pos);
+			case EField(_, _, _):
+				final reached = PathOf(e, bound);
+				if (reached == null) {
+					// Not a column, so the only thing it can be is something with a value already —
+					// an enum abstract's member, most often.
+					final constant = ConstantOf(e);
+					if (constant != null) {
+						return constant;
+					}
+					Context.error('Only a column of a row this lambda is written over, or a constant, can be used here',
+						e.pos);
 				}
+				final row = rows[reached.row];
+				ColumnsBuilder.Member(ColumnsBuilder.Of(row, reached.row), MemberOf(reached.path, row, e.pos));
 
 			case EConst(CInt(v, _)):
 				macro ${Factory("constInt")}($v{Std.parseInt(v)});
@@ -129,7 +134,40 @@ class ExpressionConverter {
 				macro ${Factory("constInt")}($v{-Std.parseInt(v)});
 
 			case _:
+				final constant = ConstantOf(e);
+				if (constant != null) {
+					return constant;
+				}
 				Context.error('Cannot convert to SQL: ${e.toString()}', e.pos);
+		}
+	}
+
+	/**
+		The constant an expression already is, or null where it is not one.
+
+		`BookingStatus.Confirmed` is the case this is for: an enum abstract's member is its value by
+		the time it is typed, so asking the compiler what it is costs nothing and means SQL sees the
+		number the database stores rather than a name it would not know.
+	**/
+	static function ConstantOf(e:Expr):Null<Expr> {
+		final typed = try Context.typeExpr(e) catch (_:Dynamic) return null;
+		return switch UnwrapTyped(typed).expr {
+			case TConst(TInt(v)): macro ${Factory("constInt")}($v{v});
+			case TConst(TFloat(v)): macro ${Factory("constFloat")}($v{Std.parseFloat(v)});
+			case TConst(TString(v)): macro ${Factory("constString")}($v{v});
+			case TConst(TBool(v)): macro ${Factory("constBool")}($v{v});
+			case TConst(TNull): macro ${Factory("constNull")}();
+			case _: null;
+		}
+	}
+
+	/** An enum abstract's member arrives wrapped in the cast to its underlying type. */
+	static function UnwrapTyped(e:TypedExpr):TypedExpr {
+		return switch e.expr {
+			case TCast(inner, _): UnwrapTyped(inner);
+			case TMeta(_, inner): UnwrapTyped(inner);
+			case TParenthesis(inner): UnwrapTyped(inner);
+			case _: e;
 		}
 	}
 
@@ -158,21 +196,61 @@ class ExpressionConverter {
 	}
 
 	/**
-		Checks that the row really has this field, so that a typo is a compile error here rather than
-		a confusing one about the generated columns type. Answers with the field's own name, which is
-		what that type calls its member; the column name it maps to is settled there.
+		The row a field access reaches, and the path of members to it — `b.price.zar` is row `b` and
+		the path `[price, zar]`. Null where it does not start at a row this lambda is written over.
 	**/
-	static function ColumnOf(field:String, entity:Type, pos:Position):String {
-		final row = switch entity.follow() {
+	static function PathOf(e:Expr, bound:Map<String, Int>):Null<{row:Int, path:Array<String>}> {
+		final path:Array<String> = [];
+		var walk = Unwrap(e);
+		while (true) {
+			switch walk.expr {
+				case EField(owner, field, _):
+					path.unshift(field);
+					walk = Unwrap(owner);
+				case EConst(CIdent(name)) if (bound.exists(name)):
+					return {row: bound[name], path: path};
+				case _:
+					return null;
+			}
+		}
+	}
+
+	/**
+		Checks that the row really has this path, so that a typo is a compile error here rather than
+		a confusing one about the generated columns type. Answers with the name that type calls the
+		member; the column it maps to is settled there.
+	**/
+	static function MemberOf(path:Array<String>, entity:Type, pos:Position):String {
+		var row = switch entity.follow() {
 			case TInst(t, _): t.get();
 			case _: Context.error('${entity.toString()} is not a class, so it has no columns', pos);
 		}
-		for (f in row.fields.get()) {
-			if (f.name == field) {
-				return f.name;
+
+		for (step in 0...path.length) {
+			final found = FieldNamed(row, path[step]);
+			if (found == null) {
+				final reached = step == 0 ? row.name : '${row.name} (reached by ${path.slice(0, step).join(".")})';
+				Context.error('$reached has no field "${path[step]}"', pos);
+			}
+			if (step == path.length - 1) {
+				break;
+			}
+			row = switch found.type.follow() {
+				case TInst(t, _): t.get();
+				case t: Context.error('${path[step]} is ${t.toString()}, which has no members to reach', pos);
 			}
 		}
-		return Context.error('${row.name} has no field "$field"', pos);
+
+		return path.join(ColumnsBuilder.Separator);
+	}
+
+	static function FieldNamed(row:ClassType, name:String):Null<ClassField> {
+		for (field in row.fields.get()) {
+			if (field.name == name) {
+				return field;
+			}
+		}
+		return null;
 	}
 
 	/**

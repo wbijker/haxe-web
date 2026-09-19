@@ -89,18 +89,60 @@ class ColumnsBuilder {
 			macro codequery.sqlexpressions.ParameterSqlSource.At($v{index}),
 			row.pos, 'The source the lambda parameter at position $index stands for.');
 
-		final source = Member(path, "Source");
+		Columns(fields, row, Member(path, "Source"), [], []);
+		return fields;
+	}
+
+	/**
+		One static per column, walking into a member that is itself an object.
+
+		A field holding a structure is not a table of its own: its members are columns of this row,
+		named for the path to them — `price.zar` is the column `price_zar`, which is what C#'s
+		`[ColumnObject(Flatten)]` does. `member` is the path to here, and `visited` the types along
+		it, which is what stops a type containing itself from walking forever.
+	**/
+	static function Columns(into:Array<Field>, row:ClassType, source:Expr, member:Array<String>, visited:Array<String>):Void {
 		for (field in row.fields.get()) {
 			if (!IsColumn(field)) {
 				continue;
 			}
-			final column = ColumnNameOf(field);
-			LazyStatic(fields, field.name, macro :codequery.sqlexpressions.ColumnSqlExpression,
-				macro new codequery.sqlexpressions.ColumnSqlExpression($source, $v{column}),
-				field.pos, 'The $column column.');
-		}
 
-		return fields;
+			final nested = ObjectColumn(field.type);
+			if (nested == null) {
+				final column = member.concat([ColumnNameOf(field)]).join(Separator);
+				LazyStatic(into, member.concat([field.name]).join(Separator),
+					macro :codequery.sqlexpressions.ColumnSqlExpression,
+					macro new codequery.sqlexpressions.ColumnSqlExpression($source, $v{column}),
+					field.pos, 'The $column column.');
+				continue;
+			}
+
+			final name = nested.pack.concat([nested.name]).join(".");
+			if (visited.indexOf(name) >= 0) {
+				Context.error('${row.name}.${field.name} contains itself, so its columns have no end', field.pos);
+			}
+			Columns(into, nested, source, member.concat([ColumnNameOf(field)]), visited.concat([name]));
+		}
+	}
+
+	/** What joins the parts of a flattened member's name, as `ProjectionMember.Separator` does in C#. */
+	public static final Separator = "_";
+
+	/**
+		The class behind a member that is an object rather than a value, or null for a value.
+
+		Everything a column can hold on its own is a value: the numbers and strings, a date, and an
+		enum abstract, which is its underlying value by the time SQL sees it.
+	**/
+	static function ObjectColumn(type:Type):Null<ClassType> {
+		return switch type.follow() {
+			case TInst(t, _):
+				final row = t.get();
+				final name = row.pack.concat([row.name]).join(".");
+				(name == "String" || name == "Date") ? null : row;
+			case _:
+				null;
+		}
 	}
 
 	/**

@@ -168,7 +168,10 @@ class SqlDriver {
 
 		final binary = Std.downcast(cast e, BinarySqlExpression);
 		if (binary != null) {
-			return '${Operand(binary, binary.Left)} ${RenderOperator(binary.Operator)} ${Operand(binary, binary.Right)}';
+			final nullTest = NullTest(binary);
+			return nullTest != null
+				? nullTest
+				: '${Operand(binary, binary.Left)} ${RenderOperator(binary.Operator)} ${Operand(binary, binary.Right)}';
 		}
 
 		final aggregate = Std.downcast(cast e, AggregateSqlExpression);
@@ -242,6 +245,32 @@ class SqlDriver {
 			throw 'This statement has ${sources.length} source(s), so it has no row ${parameter.Index}';
 		}
 		return sources[parameter.Index].Alias;
+	}
+
+	/**
+		`x IS NULL` rather than `x = NULL`.
+
+		Nothing equals NULL in SQL, not even NULL — a comparison against it is neither true nor
+		false but unknown, so `= NULL` quietly matches no row at all. Written as a comparison,
+		meant as a test, and rendered as one.
+	**/
+	function NullTest(binary:BinarySqlExpression):Null<String> {
+		final negated = switch binary.Operator {
+			case Equal: false;
+			case NotEqual: true;
+			case _: return null;
+		}
+
+		final operand = IsNull(binary.Left) ? binary.Right : (IsNull(binary.Right) ? binary.Left : null);
+		if (operand == null) {
+			return null;
+		}
+		return '${RenderExpression(operand)} IS ${negated ? "NOT NULL" : "NULL"}';
+	}
+
+	function IsNull(e:ISqlExpression):Bool {
+		final constant = Std.downcast(cast e, ConstSqlExpression);
+		return constant != null && constant.Value.match(SqlConstNull);
 	}
 
 	/** Parenthesise a child only where precedence needs it. */
