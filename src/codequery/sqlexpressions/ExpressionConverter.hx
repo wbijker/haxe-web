@@ -80,6 +80,8 @@ class ExpressionConverter {
 		return switch e.expr {
 			case EReturn(inner) if (inner != null): Unwrap(inner);
 			case EParenthesis(inner): Unwrap(inner);
+			// A cast's target type is named by annotating it, which is not part of the expression.
+			case ECheckType(inner, _): Unwrap(inner);
 			case EMeta(_, inner): Unwrap(inner);
 			case EBlock([inner]): Unwrap(inner);
 			case _: e;
@@ -91,6 +93,10 @@ class ExpressionConverter {
 		final e = Unwrap(e);
 		return switch e.expr {
 			case EBinop(op, left, right):
+				final quantified = Quantified(op, left, right, bound, rows, e.pos);
+				if (quantified != null) {
+					return quantified;
+				}
 				final factory = FactoryFor(op, e.pos);
 				final l = ToSqlExpression(left, bound, rows);
 				final r = ToSqlExpression(right, bound, rows);
@@ -186,6 +192,42 @@ class ExpressionConverter {
 		}
 	}
 
+	/**
+		`x > ANY (…)` and `x = ALL (…)`, which read as a comparison against `Sql.any` or `Sql.all` —
+		so the operator belongs to the comparison and the quantifier to the side it is against.
+	**/
+	static function Quantified(op:Binop, left:Expr, right:Expr, bound:Map<String, Int>, rows:Array<Type>,
+			pos:Position):Null<Expr> {
+		final quantifier = switch Unwrap(right).expr {
+			case ECall({expr: EField({expr: EConst(CIdent("Sql"))}, name, _)}, [query]) if (name == "any" || name == "all"):
+				{name: name == "any" ? "Any" : "All", query: query};
+			case _: null;
+		}
+		if (quantifier == null) {
+			return null;
+		}
+
+		final comparison = OperatorFor(op, pos);
+		final name = quantifier.name;
+		final subquery = Statement(quantifier.query);
+		return macro codequery.sqlexpressions.Expr.quantified(${ToSqlExpression(left, bound, rows)}, $comparison,
+			$p{["codequery", "sqlexpressions", "Quantifier", name]}, $subquery);
+	}
+
+	/** The `SqlBinaryOperator` an operator maps to, which a quantified comparison needs by name. */
+	static function OperatorFor(op:Binop, pos:Position):Expr {
+		final name = switch op {
+			case OpEq: "Equal";
+			case OpNotEq: "NotEqual";
+			case OpLt: "LessThan";
+			case OpLte: "LessThanOrEqual";
+			case OpGt: "GreaterThan";
+			case OpGte: "GreaterThanOrEqual";
+			case _: Context.error('Operator ${new Printer().printBinop(op)} cannot be quantified', pos);
+		}
+		return macro $p{["codequery", "sqlexpressions", "SqlBinaryOperator", name]};
+	}
+
 	/** One of `Sql`'s calls, as the expression it stands for. */
 	static function SqlCall(name:String, args:Array<Expr>, bound:Map<String, Int>, rows:Array<Type>, pos:Position):Expr {
 		// Converted only where a call actually wants it: `isIn` takes its values as a list, which is
@@ -224,6 +266,38 @@ class ExpressionConverter {
 				final negate = name == "isNotDistinctFrom";
 				macro codequery.sqlexpressions.Expr.isDistinctFrom(${arg(0)}, ${arg(1)}, $v{negate});
 
+			case "castTo":
+				macro codequery.sqlexpressions.Expr.castTo(${arg(0)}, ${args[1]});
+
+			case "raw":
+				macro codequery.sqlexpressions.Expr.raw(${args[0]});
+
+			case "param":
+				Parameterised(args[0]);
+
+			case "scalar" | "correlated":
+				final correlated = name == "correlated";
+				macro codequery.sqlexpressions.Expr.scalar(${Statement(args[0])}, $v{correlated});
+
+			// `any` and `all` stand on one side of a comparison, so the operator is picked up there.
+			case "any" | "all":
+				Context.error('Sql.$name belongs on one side of a comparison, e.g. a.id == Sql.any(q)', pos);
+
+			// EXTRACT takes one argument written as `part FROM value`, not two.
+			case "datePart":
+				macro codequery.sqlexpressions.Expr.call("EXTRACT", [
+					codequery.sqlexpressions.Expr.infix("FROM", [codequery.sqlexpressions.Expr.raw(${args[0]}), ${arg(1)}])
+				]);
+
+			case "dateAdd" | "dateSubtract":
+				final sign = name == "dateAdd" ? "+" : "-";
+				macro codequery.sqlexpressions.Expr.infix($v{sign}, [${arg(0)}, ${Interval(args[1], args[2])}]);
+
+			case "abs": macro codequery.sqlexpressions.Expr.call("ABS", ${list(0)});
+			case "round": macro codequery.sqlexpressions.Expr.call("ROUND", ${list(0)});
+			case "ceil": macro codequery.sqlexpressions.Expr.call("CEIL", ${list(0)});
+			case "floor": macro codequery.sqlexpressions.Expr.call("FLOOR", ${list(0)});
+
 			case "coalesce": macro codequery.sqlexpressions.Expr.call("COALESCE", ${list(0)});
 			case "nullIf": macro codequery.sqlexpressions.Expr.call("NULLIF", ${list(0)});
 			case "upper": macro codequery.sqlexpressions.Expr.call("UPPER", ${list(0)});
@@ -235,6 +309,29 @@ class ExpressionConverter {
 
 			case _: Context.error('Sql.$name has no SQL here yet', pos);
 		}
+	}
+
+	/** The statement behind a query handed to `Sql`. */
+	static function Statement(query:Expr):Expr {
+		return macro(cast $query : codequery.queries.SelectQueryImpl).ToExpression();
+	}
+
+	/** `INTERVAL 'n unit'`, which is a literal of its own rather than a function of two values. */
+	static function Interval(count:Expr, unit:Expr):Expr {
+		return macro codequery.sqlexpressions.Expr.raw("INTERVAL \'" + $count + " " + $unit + "\'");
+	}
+
+	/** The same value as `Valued`, but sent beside the statement rather than written into it. */
+	static function Parameterised(value:Expr):Expr {
+		final factory = Factory(switch Context.typeof(value).followWithAbstracts() {
+			case TAbstract(_.get() => {name: "Int"}, _): "paramInt";
+			case TAbstract(_.get() => {name: "Float"}, _): "paramFloat";
+			case TAbstract(_.get() => {name: "Bool"}, _): "paramBool";
+			case TInst(_.get() => {name: "String"}, _): "paramString";
+			case TInst(_.get() => {name: "Date"}, _): "paramDate";
+			case t: Context.error('${t.toString()} is not something a parameter can hold', value.pos);
+		});
+		return macro $factory($value);
 	}
 
 	static function FactoryFor(op:Binop, pos:Position):Expr {

@@ -110,9 +110,10 @@ class ColumnsBuilder {
 			final nested = ObjectColumn(field.type);
 			if (nested == null) {
 				final column = member.concat([ColumnNameOf(field)]).join(Separator);
+				final columnType = SqlTypeOf(field);
 				LazyStatic(into, member.concat([field.name]).join(Separator),
 					macro :codequery.sqlexpressions.ColumnSqlExpression,
-					macro new codequery.sqlexpressions.ColumnSqlExpression($source, $v{column}),
+					macro new codequery.sqlexpressions.ColumnSqlExpression($source, $v{column}, $columnType),
 					field.pos, 'The $column column.');
 				continue;
 			}
@@ -123,6 +124,31 @@ class ColumnsBuilder {
 			}
 			Columns(into, nested, source, member.concat([ColumnNameOf(field)]), visited.concat([name]));
 		}
+	}
+
+	/**
+		What a column holds, read from the field's type — and from `@columnMaxLength`, which is what
+		separates a bounded string from an unbounded one.
+	**/
+	static function SqlTypeOf(field:ClassField):Expr {
+		final bounded = switch field.meta.extract("columnMaxLength") {
+			case [{params: [{expr: EConst(CInt(v, _))}]}]: Std.parseInt(v);
+			case _: null;
+		}
+
+		// Unwrapped first, so an enum abstract is its underlying number and SqlDate is a date.
+		final name = switch field.type.followWithAbstracts() {
+			case TAbstract(_.get() => {name: "Int"}, _): "SqlInt";
+			case TAbstract(_.get() => {name: "Float"}, _): "SqlFloat";
+			case TAbstract(_.get() => {name: "Bool"}, _): "SqlBool";
+			case TInst(_.get() => {name: "Date"}, _): "SqlTimestamp";
+			case TInst(_.get() => {name: "String"}, _): bounded == null ? "SqlText" : "SqlVarChar";
+			case _: "SqlUnknown";
+		}
+
+		return name == "SqlVarChar"
+			? macro codequery.sqlexpressions.SqlType.SqlVarChar($v{bounded})
+			: macro $p{["codequery", "sqlexpressions", "SqlType", name]};
 	}
 
 	/** What joins the parts of a flattened member's name, as `ProjectionMember.Separator` does in C#. */

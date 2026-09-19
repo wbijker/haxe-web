@@ -78,6 +78,48 @@ class Expr {
 		return new SqlFunctionExpression(name, arguments, true);
 	}
 
+	public static function castTo(value:ISqlExpression, type:SqlType):SqlCastExpression {
+		return new SqlCastExpression(value, type);
+	}
+
+	public static function raw(sql:String):RawSqlExpression {
+		return new RawSqlExpression(sql);
+	}
+
+	public static function scalar(subquery:SelectExpression, correlated:Bool = false):ScalarSubquerySqlExpression {
+		return new ScalarSubquerySqlExpression(subquery, correlated);
+	}
+
+	public static function quantified(value:ISqlExpression, op:SqlBinaryOperator, quantifier:Quantifier,
+			subquery:SelectExpression):QuantifiedComparisonSqlExpression {
+		return new QuantifiedComparisonSqlExpression(value, op, quantifier, subquery);
+	}
+
+	/** A value sent beside the statement rather than written into it. */
+	public static function param(value:SqlConstValue):SqlParameterExpression {
+		return new SqlParameterExpression(value);
+	}
+
+	public static function paramInt(value:Null<Int>):ISqlExpression {
+		return value == null ? constNull() : param(SqlConstInt(value));
+	}
+
+	public static function paramFloat(value:Null<Float>):ISqlExpression {
+		return value == null ? constNull() : param(SqlConstFloat(value));
+	}
+
+	public static function paramString(value:Null<String>):ISqlExpression {
+		return value == null ? constNull() : param(SqlConstString(value));
+	}
+
+	public static function paramBool(value:Null<Bool>):ISqlExpression {
+		return value == null ? constNull() : param(SqlConstBool(value));
+	}
+
+	public static function paramDate(value:Null<Date>):ISqlExpression {
+		return value == null ? constNull() : param(SqlConstDate(value));
+	}
+
 	public static function equal(left:ISqlExpression, right:ISqlExpression):BinarySqlExpression {
 		return new BinarySqlExpression(left, Equal, right);
 	}

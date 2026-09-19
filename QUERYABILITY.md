@@ -15,16 +15,16 @@ types against this port. Worked in batches of ten, top down.
 - [x] 8. `COALESCE` / `NULLIF`
 - [x] 9. String functions — `UPPER`, `LOWER`, `LENGTH`, `TRIM`, `SUBSTRING`
 - [x] 10. String concatenation
-- [ ] 11. `CAST`
-- [ ] 12. Raw SQL, as an escape hatch
-- [ ] 13. Scalar subquery
-- [ ] 14. Quantified comparison — `= ANY (…)`, `> ALL (…)`
-- [ ] 15. Parameters, rather than values written into the SQL
-- [ ] 16. Date part extraction
-- [ ] 17. Date arithmetic and intervals
-- [ ] 18. Numeric functions — `ABS`, `ROUND`, `CEIL`, `FLOOR`
-- [ ] 19. `SqlType` on a column
-- [ ] 20. A visitor, in place of the driver's downcast chain
+- [x] 11. `CAST`
+- [x] 12. Raw SQL, as an escape hatch
+- [x] 13. Scalar subquery
+- [x] 14. Quantified comparison — `= ANY (…)`, `> ALL (…)`
+- [x] 15. Parameters, rather than values written into the SQL
+- [x] 16. Date part extraction
+- [x] 17. Date arithmetic and intervals
+- [x] 18. Numeric functions — `ABS`, `ROUND`, `CEIL`, `FLOOR`
+- [x] 19. `SqlType` on a column
+- [x] 20. A visitor, in place of the driver's downcast chain
 
 ## Windows and aggregates
 

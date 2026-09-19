@@ -73,4 +73,55 @@ extern class Sql {
 
 	/** `a || b || …` — the strings joined, which is not what `+` means in SQL. */
 	public static function concat(first:String, rest:haxe.extern.Rest<String>):String;
+
+	/** `CAST(x AS <type>)`. */
+	public static function castTo<TFrom, TTo>(value:TFrom, type:codequery.sqlexpressions.SqlType):TTo;
+
+	/**
+		SQL written out, for what nothing else here can say.
+
+		Sent as it stands and checked by nothing, so a value belongs in `param` beside it rather
+		than written into the text.
+	**/
+	public static function raw<T>(sql:String):T;
+
+	/**
+		A value sent beside the statement rather than written into it.
+
+		Everything else a lambda names becomes a literal in the SQL. This is how a value does not.
+	**/
+	public static function param<T>(value:T):T;
+
+	/** A subquery standing where a value does — one row of one column. */
+	public static function scalar<T, TQuery>(query:TQuery):T;
+
+	/** A subquery that may name the rows of the statement it sits in. */
+	public static function correlated<T, TQuery>(query:TQuery):T;
+
+	/** `x <op> ANY (<query>)` — true where it holds for one row of the query. */
+	public static function any<T, TQuery>(query:TQuery):T;
+
+	/** `x <op> ALL (<query>)` — true where it holds for every row. */
+	public static function all<T, TQuery>(query:TQuery):T;
+
+	/** `EXTRACT(<part> FROM x)` — `year`, `month`, `day`, `hour`, `dow` and the rest. */
+	public static function datePart(part:String, value:Date):Int;
+
+	/** `x + INTERVAL 'n unit'` — `days`, `months`, `years` and the rest. */
+	public static function dateAdd(value:Date, count:Int, unit:String):Date;
+
+	/** `x - INTERVAL 'n unit'`. */
+	public static function dateSubtract(value:Date, count:Int, unit:String):Date;
+
+	/** `ABS(x)`. */
+	public static function abs<T:Float>(value:T):T;
+
+	/** `ROUND(x)`, or to `places` decimals. */
+	public static function round(value:Float, ?places:Int):Float;
+
+	/** `CEIL(x)`. */
+	public static function ceil(value:Float):Float;
+
+	/** `FLOOR(x)`. */
+	public static function floor(value:Float):Float;
 }

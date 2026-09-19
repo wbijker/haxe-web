@@ -11,6 +11,14 @@ import codequery.sqlexpressions.NotSqlExpression;
 import codequery.sqlexpressions.SqlFunctionExpression;
 import codequery.sqlexpressions.ColumnSqlExpression;
 import codequery.sqlexpressions.ConstSqlExpression;
+import codequery.sqlexpressions.ISqlExpressionVisitor;
+import codequery.sqlexpressions.QuantifiedComparisonSqlExpression;
+import codequery.sqlexpressions.RawSqlExpression;
+import codequery.sqlexpressions.ScalarSubquerySqlExpression;
+import codequery.sqlexpressions.SqlCastExpression;
+import codequery.sqlexpressions.SqlExpressionWalker;
+import codequery.sqlexpressions.SqlParameterExpression;
+import codequery.sqlexpressions.SqlType;
 import codequery.sqlexpressions.DeleteExpression;
 import codequery.sqlexpressions.ISqlStatement;
 import codequery.sqlexpressions.InsertExpression;
@@ -34,12 +42,18 @@ import codequery.sqlexpressions.TableSqlSource;
 	Renders a statement as SQL. The C# original splits this into an `ISqlTranslator` that renders
 	and an `ISqlDriver` that also knows where to send the result; only the rendering half is here.
 **/
-class SqlDriver {
+class SqlDriver implements ISqlExpressionVisitor<String> {
 	/**
 		The statement being rendered, in the order a lambda's parameters bind to its sources. A
 		generated column names its source by position, so rendering one is a lookup here.
 	**/
 	var sources:Array<ISqlSource> = [];
+
+	/** The values of the statement being rendered, in the order their placeholders were numbered. */
+	var parameters:Array<SqlConstValue> = [];
+
+	/** What was sent beside the last statement rendered. */
+	public var Parameters(default, null):Array<SqlConstValue> = [];
 
 	public function new() {}
 
@@ -48,6 +62,14 @@ class SqlDriver {
 		overloading, so the statement says which kind it is and this asks.
 	**/
 	public function ToSql(statement:ISqlStatement):String {
+		// Each statement collects its own values; a placeholder is numbered by where it lands.
+		parameters = [];
+		final sql = Render(statement);
+		Parameters = parameters;
+		return sql;
+	}
+
+	function Render(statement:ISqlStatement):String {
 		final select = Std.downcast(cast statement, SelectExpression);
 		if (select != null) {
 			return ToSelectSql(select);
@@ -251,100 +273,128 @@ class SqlDriver {
 		return sql;
 	}
 
-	/**
-		The C# original dispatches through `ISqlExpressionVisitor`; a downcast chain says the same
-		thing for the node kinds that exist so far.
-	**/
-	function RenderExpression(e:ISqlExpression):String {
-		final column = Std.downcast(cast e, ColumnSqlExpression);
-		if (column != null) {
-			return '${AliasOf(column.Source)}.${column.ColumnName}';
-		}
+	/** Every expression goes through the visitor, so a kind nobody handles will not compile. */
+	public function RenderExpression(e:ISqlExpression):String {
+		return SqlExpressionWalker.Visit(e, this);
+	}
 
-		final constant = Std.downcast(cast e, ConstSqlExpression);
-		if (constant != null) {
-			return RenderConst(constant.Value);
-		}
+	public function OnColumn(e:ColumnSqlExpression):String {
+		return '${AliasOf(e.Source)}.${e.ColumnName}';
+	}
 
-		final binary = Std.downcast(cast e, BinarySqlExpression);
-		if (binary != null) {
-			final nullTest = NullTest(binary);
-			return nullTest != null
-				? nullTest
-				: '${Operand(binary, binary.Left)} ${RenderOperator(binary.Operator)} ${Operand(binary, binary.Right)}';
-		}
+	public function OnAllColumns(e:AllColumnsSqlExpression):String {
+		return '${AliasOf(e.Source)}.*';
+	}
 
-		final aggregate = Std.downcast(cast e, AggregateSqlExpression);
-		if (aggregate != null) {
-			return RenderAggregate(aggregate);
-		}
+	public function OnConst(e:ConstSqlExpression):String {
+		return RenderConst(e.Value);
+	}
 
-		final all = Std.downcast(cast e, AllColumnsSqlExpression);
-		if (all != null) {
-			return '${AliasOf(all.Source)}.*';
-		}
+	public function OnParameter(e:SqlParameterExpression):String {
+		parameters.push(e.Value);
+		e.Ordinal = parameters.length;
+		return '$$${e.Ordinal}';
+	}
 
-		final projection = Std.downcast(cast e, ProjectionSqlExpression);
-		if (projection != null) {
-			return projection.Members
-				.map(member -> '${RenderExpression(member.Expression)} AS ${member.Name}')
-				.join(", ");
-		}
+	public function OnBinary(e:BinarySqlExpression):String {
+		final nullTest = NullTest(e);
+		return nullTest != null
+			? nullTest
+			: '${Operand(e, e.Left)} ${RenderOperator(e.Operator)} ${Operand(e, e.Right)}';
+	}
 
-		final negation = Std.downcast(cast e, NotSqlExpression);
-		if (negation != null) {
-			return 'NOT (${RenderExpression(negation.Operand)})';
-		}
+	public function OnNot(e:NotSqlExpression):String {
+		return 'NOT (${RenderExpression(e.Operand)})';
+	}
 
-		final within = Std.downcast(cast e, InSqlExpression);
-		if (within != null) {
-			final keyword = within.Negate ? "NOT IN" : "IN";
-			// Not correlated: the subquery stands on its own sources, so the outer ones are out of
-			// scope inside it — unlike EXISTS, whose whole point is to reach them.
-			final of = within.Subquery != null
-				? Against(within.Subquery.AllSources(), () -> Statement(within.Subquery))
-				: within.Values.map(RenderExpression).join(", ");
-			return '${RenderExpression(within.Value)} $keyword ($of)';
-		}
+	public function OnIn(e:InSqlExpression):String {
+		final keyword = e.Negate ? "NOT IN" : "IN";
+		// Not correlated: the subquery stands on its own sources, so the outer ones are out of
+		// scope inside it — unlike EXISTS, whose whole point is to reach them.
+		final of = e.Subquery != null
+			? Against(e.Subquery.AllSources(), () -> Statement(e.Subquery))
+			: e.Values.map(RenderExpression).join(", ");
+		return '${RenderExpression(e.Value)} $keyword ($of)';
+	}
 
-		final span = Std.downcast(cast e, BetweenSqlExpression);
-		if (span != null) {
-			final keyword = span.Negate ? "NOT BETWEEN" : "BETWEEN";
-			return '${RenderExpression(span.Value)} $keyword ${RenderExpression(span.Lower)} AND ${RenderExpression(span.Upper)}';
-		}
+	public function OnBetween(e:BetweenSqlExpression):String {
+		final keyword = e.Negate ? "NOT BETWEEN" : "BETWEEN";
+		return '${RenderExpression(e.Value)} $keyword ${RenderExpression(e.Lower)} AND ${RenderExpression(e.Upper)}';
+	}
 
-		final distinct = Std.downcast(cast e, IsDistinctFromSqlExpression);
-		if (distinct != null) {
-			final keyword = distinct.Negate ? "IS NOT DISTINCT FROM" : "IS DISTINCT FROM";
-			return '${RenderExpression(distinct.Left)} $keyword ${RenderExpression(distinct.Right)}';
-		}
+	public function OnIsDistinctFrom(e:IsDistinctFromSqlExpression):String {
+		final keyword = e.Negate ? "IS NOT DISTINCT FROM" : "IS DISTINCT FROM";
+		return '${RenderExpression(e.Left)} $keyword ${RenderExpression(e.Right)}';
+	}
 
-		final branching = Std.downcast(cast e, CaseSqlExpression);
-		if (branching != null) {
-			var sql = "CASE";
-			for (branch in branching.Branches) {
-				sql += ' WHEN ${RenderExpression(branch.When)} THEN ${RenderExpression(branch.Then)}';
-			}
-			if (branching.Otherwise != null) {
-				sql += ' ELSE ${RenderExpression(branching.Otherwise)}';
-			}
-			return sql + " END";
+	public function OnCase(e:CaseSqlExpression):String {
+		var sql = "CASE";
+		for (branch in e.Branches) {
+			sql += ' WHEN ${RenderExpression(branch.When)} THEN ${RenderExpression(branch.Then)}';
 		}
-
-		final call = Std.downcast(cast e, SqlFunctionExpression);
-		if (call != null) {
-			final arguments = call.Arguments.map(RenderExpression);
-			return call.Infix
-				? arguments.join(' ${call.Name} ')
-				: '${call.Name}(${arguments.join(", ")})';
+		if (e.Otherwise != null) {
+			sql += ' ELSE ${RenderExpression(e.Otherwise)}';
 		}
+		return sql + " END";
+	}
 
-		final exists = Std.downcast(cast e, ExistsSqlExpression);
-		if (exists != null) {
-			return '${exists.Negate ? "NOT EXISTS" : "EXISTS"} (${Correlated(exists.Subquery)})';
+	public function OnFunction(e:SqlFunctionExpression):String {
+		final arguments = e.Arguments.map(RenderExpression);
+		return e.Infix ? arguments.join(' ${e.Name} ') : '${e.Name}(${arguments.join(", ")})';
+	}
+
+	public function OnCast(e:SqlCastExpression):String {
+		return 'CAST(${RenderExpression(e.Value)} AS ${RenderType(e.Type)})';
+	}
+
+	public function OnRaw(e:RawSqlExpression):String {
+		return e.Sql;
+	}
+
+	public function OnAggregate(e:AggregateSqlExpression):String {
+		return RenderAggregate(e);
+	}
+
+	public function OnProjection(e:ProjectionSqlExpression):String {
+		return e.Members.map(member -> '${RenderExpression(member.Expression)} AS ${member.Name}').join(", ");
+	}
+
+	public function OnExists(e:ExistsSqlExpression):String {
+		return '${e.Negate ? "NOT EXISTS" : "EXISTS"} (${Correlated(e.Subquery)})';
+	}
+
+	public function OnScalarSubquery(e:ScalarSubquerySqlExpression):String {
+		return e.Correlated
+			? '(${Correlated(e.Subquery)})'
+			: '(${Against(e.Subquery.AllSources(), () -> Statement(e.Subquery))})';
+	}
+
+	public function OnQuantified(e:QuantifiedComparisonSqlExpression):String {
+		final quantifier = switch e.Quantifier {
+			case Any: "ANY";
+			case All: "ALL";
 		}
+		final of = Against(e.Subquery.AllSources(), () -> Statement(e.Subquery));
+		return '${RenderExpression(e.Value)} ${RenderOperator(e.Operator)} $quantifier ($of)';
+	}
 
-		throw 'Cannot render ${Type.getClassName(Type.getClass(e))}';
+	public function OnOrderBy(e:OrderByExpression):String {
+		return RenderOrderBy(e);
+	}
+
+	function RenderType(type:SqlType):String {
+		return switch type {
+			case SqlInt: "INTEGER";
+			case SqlBigInt: "BIGINT";
+			case SqlFloat: "DOUBLE PRECISION";
+			case SqlDecimal(precision, scale): 'DECIMAL($precision, $scale)';
+			case SqlBool: "BOOLEAN";
+			case SqlText: "TEXT";
+			case SqlVarChar(length): 'VARCHAR($length)';
+			case SqlDate: "DATE";
+			case SqlTimestamp: "TIMESTAMP";
+			case SqlUnknown: throw "A cast needs a type to cast to";
+		}
 	}
 
 	/**
