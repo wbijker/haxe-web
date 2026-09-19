@@ -106,9 +106,14 @@ class SelectQueryExtensions {
 	**/
 	public static macro function SelectAggregation(self:Expr, projection:Expr):Expr {
 		final rows = ExpressionConverter.EntitiesOf(self);
-		final aggregated = ExpressionConverter.ConvertAggregation(projection, rows, Impl(self));
+		// The query is held once, so a window the projection names is the one on the statement
+		// being projected rather than one built again by evaluating the chain a second time.
+		final aggregated = ExpressionConverter.ConvertAggregation(projection, rows, macro __query);
 		final selection = aggregated.selection;
-		return ExpressionConverter.Answering(macro ${Impl(self)}.SelectProjection($selection), [aggregated.row]);
+		return ExpressionConverter.Answering(macro {
+			final __query = ${Impl(self)};
+			__query.SelectProjection($selection);
+		}, [aggregated.row]);
 	}
 
 	/** `UNION` — the rows of both, with duplicates dropped. */
@@ -227,10 +232,11 @@ class SelectQueryExtensions {
 		final window = ExpressionConverter.ConvertWindow(spec, rows);
 		final partitionBy = window.partitionBy;
 		final orderBy = window.orderBy;
+		final frame = window.frame;
 
 		final defined = ExpressionConverter.Omitted(name)
-			? macro ${Impl(self)}.AddWindow($partitionBy, $orderBy)
-			: macro ${Impl(self)}.AddWindow($partitionBy, $orderBy, $name);
+			? macro ${Impl(self)}.AddWindow($partitionBy, $orderBy, null, $frame)
+			: macro ${Impl(self)}.AddWindow($partitionBy, $orderBy, $name, $frame);
 		return ExpressionConverter.Answering(defined, rows.concat([ExpressionConverter.WindowRow()]));
 	}
 
@@ -318,10 +324,15 @@ class SelectQueryExtensions {
 	}
 
 	static function Projected(self:Expr, projection:Expr):Expr {
-		final projected = ExpressionConverter.ConvertProjection(projection, ExpressionConverter.EntitiesOf(self));
+		// The query is held once, so an aggregate reading over a window the query named reaches
+		// the window on the statement being projected rather than one built again.
+		final projected = ExpressionConverter.ConvertProjection(projection, ExpressionConverter.EntitiesOf(self), macro __query);
 		final selection = projected.selection;
 		// A projection collapses however many rows the query had to the one shape it answers with.
-		return ExpressionConverter.Answering(macro ${Impl(self)}.SelectProjection($selection), [projected.row]);
+		return ExpressionConverter.Answering(macro {
+			final __query = ${Impl(self)};
+			__query.SelectProjection($selection);
+		}, [projected.row]);
 	}
 
 	/** The statement underneath, which is where a clause is actually added. */

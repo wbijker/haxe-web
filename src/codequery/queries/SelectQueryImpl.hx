@@ -15,6 +15,7 @@ import codequery.sqlexpressions.JoinType;
 import codequery.sqlexpressions.NamedWindowSqlSource;
 import codequery.sqlexpressions.NullsOrdering;
 import codequery.sqlexpressions.OrderByExpression;
+import codequery.sqlexpressions.QuerySqlSource;
 import codequery.sqlexpressions.SelectExpression;
 import codequery.sqlexpressions.SourceContext;
 import codequery.sqlexpressions.SqlBinaryOperator;
@@ -45,7 +46,34 @@ class SelectQueryImpl {
 		return new SelectQueryImpl(new SelectExpression(context.AddTableSource(table)), context);
 	}
 
+	/**
+		The statement, unwrapped where wrapping it added nothing.
+
+		A projection makes the statement it projected the source of a new one, so that what follows
+		can read the projected columns. Asked for as it stands, `SELECT * FROM (<projected>)` says no
+		more than the projected statement does, so that is what is answered — as the C# does. The
+		same wrapper carrying only DISTINCT, LIMIT or OFFSET folds them into the statement inside,
+		where they mean the same, so a projection followed by one of them is still one SELECT.
+	**/
 	public function ToExpression():SelectExpression {
+		final inner = Std.downcast(cast SelectExpression.Source, QuerySqlSource);
+		if (inner == null) {
+			return SelectExpression;
+		}
+		if (SelectExpression.IsSimpleWrapper) {
+			return inner.Query;
+		}
+		// Folded only into a statement that has none of them and no UNION: otherwise the two would
+		// compose — the first of the first ten — and folding would quietly mean something else.
+		final within = inner.Query;
+		if (SelectExpression.IsEmptyApartFromRowRules && !within.IsDistinct && within.DistinctOn.length == 0
+			&& within.Limit == null && within.Offset == null && within.Unions.length == 0) {
+			final folded = within.Fork();
+			folded.IsDistinct = SelectExpression.IsDistinct;
+			folded.Limit = SelectExpression.Limit;
+			folded.Offset = SelectExpression.Offset;
+			return folded;
+		}
 		return SelectExpression;
 	}
 
@@ -105,10 +133,11 @@ class SelectQueryImpl {
 		is why naming happens here rather than where the spec was written: only the statement knows
 		how many it already has.
 	**/
-	public function AddWindow(partitionBy:Array<ISqlExpression>, orderBy:Array<OrderByExpression>, ?name:String):SelectQueryImpl {
+	public function AddWindow(partitionBy:Array<ISqlExpression>, orderBy:Array<OrderByExpression>, ?name:String,
+			?frame:codequery.sqlexpressions.WindowFrame):SelectQueryImpl {
 		return Fork(expression -> {
 			final given = name != null ? name : (expression.Windows.length == 0 ? "w" : "w" + expression.Windows.length);
-			expression.Windows.push(new NamedWindowSqlSource(given, partitionBy, orderBy));
+			expression.Windows.push(new NamedWindowSqlSource(given, partitionBy, orderBy, frame));
 		});
 	}
 

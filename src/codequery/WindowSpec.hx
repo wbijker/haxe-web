@@ -29,4 +29,12 @@ extern class WindowSpec<T1> {
 	/** `RANGE BETWEEN start AND end`. */
 	public function Range(start:codequery.sqlexpressions.WindowBound,
 		end:codequery.sqlexpressions.WindowBound):WindowSpec<T1>;
+
+	/** `ROWS BETWEEN start AND end` — the same as `Rows`, under the name the C# gives it. */
+	public function RowsBetween(start:codequery.sqlexpressions.WindowBound,
+		end:codequery.sqlexpressions.WindowBound):WindowSpec<T1>;
+
+	/** `RANGE BETWEEN start AND end` — the same as `Range`, under the name the C# gives it. */
+	public function RangeBetween(start:codequery.sqlexpressions.WindowBound,
+		end:codequery.sqlexpressions.WindowBound):WindowSpec<T1>;
 }

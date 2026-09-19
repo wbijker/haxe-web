@@ -113,6 +113,18 @@ extern class Sql {
 	/** `x - INTERVAL 'n unit'`. */
 	public static function dateSubtract(value:Date, count:Int, unit:String):Date;
 
+	/** `percentile_cont(fraction) WITHIN GROUP (ORDER BY x)` — the interpolated percentile. */
+	public static function percentileCont(fraction:Float, value:Float):Float;
+
+	/** `percentile_disc(fraction) WITHIN GROUP (ORDER BY x)` — the nearest actual value. */
+	public static function percentileDisc(fraction:Float, value:Float):Float;
+
+	/** `percentile_cont(0.5) WITHIN GROUP (ORDER BY x)`. */
+	public static function median(value:Float):Float;
+
+	/** `mode() WITHIN GROUP (ORDER BY x)` — the most frequent value. */
+	public static function mode<T>(value:T):T;
+
 	/** `ABS(x)`. */
 	public static function abs<T:Float>(value:T):T;
 

@@ -72,6 +72,9 @@ class SchemaSnapshot {
 			case SqlDate: "date";
 			case SqlTimestamp: "timestamp";
 			case SqlUnknown: "unknown";
+			case SqlSmallInt: "smallint";
+			case SqlReal: "real";
+			case SqlNamed(name): name;
 		}
 	}
 
@@ -91,7 +94,10 @@ class SchemaSnapshot {
 			case "text": SqlText;
 			case "date": SqlDate;
 			case "timestamp": SqlTimestamp;
-			case _: SqlUnknown;
+			case "smallint": SqlSmallInt;
+			case "real": SqlReal;
+			case "unknown": SqlUnknown;
+			case named: SqlNamed(named);
 		}
 	}
 }

@@ -99,9 +99,13 @@ class ExpressionConverter {
 		if (body == null) {
 			return e;
 		}
-		// The function answers with the lambda, so what is wanted is what it returns.
-		return switch Unwrap(Context.getTypedExpr(body)).expr {
-			case EFunction(_, {expr: answered}): Returned(Unwrap(answered));
+		// The function answers with the lambda, so what is wanted is what it returns — unless the
+		// static holds the lambda itself, in which case that is what is wanted.
+		final held = Unwrap(Context.getTypedExpr(body));
+		return switch held.expr {
+			case EFunction(_, {expr: answered}):
+				final returned = Returned(Unwrap(answered));
+				returned.expr.match(EFunction(_, _)) ? returned : held;
 			case _: e;
 		}
 	}
@@ -157,6 +161,11 @@ class ExpressionConverter {
 				| ECall({expr: EField({expr: EField({expr: EConst(CIdent("codequery"))}, "Sql", _)}, name, _)}, args):
 				SqlCall(name, args, bound, rows, e.pos);
 
+			// `Std.string(x)` is `CAST(x AS TEXT)`, as C#'s `x.ToString()` is.
+			case ECall({expr: EField({expr: EConst(CIdent("Std"))}, "string", _)}, [value]):
+				macro codequery.sqlexpressions.Expr.castTo(${ToSqlExpression(value, bound, rows)},
+					codequery.sqlexpressions.SqlType.SqlText);
+
 			case EField(_, _, _):
 				final reached = PathOf(e, bound);
 				if (reached == null) {
@@ -165,6 +174,12 @@ class ExpressionConverter {
 					final constant = ConstantOf(e);
 					if (constant != null) {
 						return constant;
+					}
+					// A read of anything that is not the row — a static, a member of one — is a
+					// value, worked out where the statement is built and sent as one.
+					final valued = ValueOf(e);
+					if (valued != null) {
+						return valued;
 					}
 					Context.error('Only a column of a row this lambda is written over, or a constant, can be used here',
 						e.pos);
@@ -194,6 +209,11 @@ class ExpressionConverter {
 				macro ${Factory("constInt")}($v{-Std.parseInt(v)});
 
 			case _:
+				// An aggregate or a window function read beside the row's own columns.
+				final windowed = WindowConverter.Convert(e, bound, rows, x -> ToSqlExpression(x, bound, rows));
+				if (windowed != null) {
+					return windowed;
+				}
 				// Already an expression — a lateral's inner query is handed the outer row's
 				// columns this way, since it has no parameter of its own for them.
 				if (IsSqlExpression(e)) {
@@ -203,7 +223,26 @@ class ExpressionConverter {
 				if (constant != null) {
 					return constant;
 				}
+				// A captured local, or anything else with a value: sent as that value.
+				final valued = ValueOf(e);
+				if (valued != null) {
+					return valued;
+				}
 				Context.error('Cannot convert to SQL: ${e.toString()}', e.pos);
+		}
+	}
+
+	/**
+		An expression that is a value rather than a column — a captured local, a static, a member of
+		one — as the constant it will be when the statement is built; null where it is not one a
+		column could hold, or cannot be typed here at all.
+	**/
+	static function ValueOf(e:Expr):Null<Expr> {
+		final type = try Context.typeof(e) catch (_:Dynamic) return null;
+		return switch type.followWithAbstracts() {
+			case TAbstract(_.get() => {name: "Int" | "Float" | "Bool"}, _): ValuedAs(e, type);
+			case TInst(_.get() => {name: "String" | "Date"}, _): ValuedAs(e, type);
+			case _: null;
 		}
 	}
 
@@ -360,7 +399,8 @@ class ExpressionConverter {
 				final values = switch Unwrap(args[1]).expr {
 					case EArrayDecl(items): {expr: EArrayDecl([for (item in items) ToSqlExpression(item, bound, rows)]),
 							pos: pos};
-					case _: Context.error("Sql." + name + " takes the values as a list written out here", args[1].pos);
+					// A list held in a variable: each of its values, read when the statement is built.
+					case _: ValuesOf(args[1]);
 				}
 				final negate = name == "notIn";
 				macro codequery.sqlexpressions.Expr.isIn(${arg(0)}, $values, $v{negate});
@@ -415,6 +455,13 @@ class ExpressionConverter {
 			case "ceil": macro codequery.sqlexpressions.Expr.call("CEIL", ${list(0)});
 			case "floor": macro codequery.sqlexpressions.Expr.call("FLOOR", ${list(0)});
 
+			// The ordered-set aggregates: `f(…) WITHIN GROUP (ORDER BY x)`.
+			case "percentileCont": macro codequery.sqlexpressions.Expr.withinGroup("percentile_cont", [${arg(0)}], ${arg(1)});
+			case "percentileDisc": macro codequery.sqlexpressions.Expr.withinGroup("percentile_disc", [${arg(0)}], ${arg(1)});
+			case "median": macro codequery.sqlexpressions.Expr.withinGroup("percentile_cont",
+					[codequery.sqlexpressions.Expr.constFloat(0.5)], ${arg(0)});
+			case "mode": macro codequery.sqlexpressions.Expr.withinGroup("mode", [], ${arg(0)});
+
 			case "coalesce": macro codequery.sqlexpressions.Expr.call("COALESCE", ${list(0)});
 			case "nullIf": macro codequery.sqlexpressions.Expr.call("NULLIF", ${list(0)});
 			case "upper": macro codequery.sqlexpressions.Expr.call("UPPER", ${list(0)});
@@ -426,6 +473,16 @@ class ExpressionConverter {
 
 			case _: Context.error('Sql.$name has no SQL here yet', pos);
 		}
+	}
+
+	/** The values of a list held in a variable, each as the constant it is when the statement is built. */
+	static function ValuesOf(list:Expr):Expr {
+		final element = switch Context.typeof(list).follow() {
+			case TInst(_.get() => {name: "Array"}, [held]): held;
+			case t: Context.error('Sql.isIn takes a list of values, not ${t.toString()}', list.pos);
+		}
+		final each = ValuedAs(macro item, element);
+		return macro [for (item in $list) $each];
 	}
 
 	/** The statement behind a query handed to `Sql`. */
@@ -590,7 +647,8 @@ class ExpressionConverter {
 		A lambda naming a row rather than building a structure — `(a, b) -> b`, which is what
 		`Reduce` is for — selects that row's columns and keeps its type.
 	**/
-	public static function ConvertProjection(projection:Expr, rows:Array<Type>):{selection:Expr, row:Type} {
+	public static function ConvertProjection(projection:Expr, rows:Array<Type>, ?query:Expr):{selection:Expr, row:Type} {
+		final projection = ResolveLambda(projection);
 		final fn = switch projection.expr {
 			case EFunction(_, f): f;
 			case _: Context.error("Expected a projection, e.g. a -> {note: a.noteNo}", projection.pos);
@@ -608,7 +666,16 @@ class ExpressionConverter {
 		// Typed first, and deliberately: the walk below only reads syntax, so if it ran first an
 		// editor would get nothing back from inside the projection. Typing is what answers that.
 		final row = ProjectedRow(fn, rows, projection.pos);
-		return {selection: ToProjection(Unwrap(fn.expr), bound, rows), row: row};
+
+		// An aggregate over a window the query named reaches the window through the query.
+		final enclosing = WindowConverter.CurrentQuery;
+		WindowConverter.CurrentQuery = query;
+		final selection = try ToProjection(Unwrap(fn.expr), bound, rows) catch (failed:Dynamic) {
+			WindowConverter.CurrentQuery = enclosing;
+			throw failed;
+		}
+		WindowConverter.CurrentQuery = enclosing;
+		return {selection: selection, row: row};
 	}
 
 	/**
@@ -672,8 +739,9 @@ class ExpressionConverter {
 		}
 
 		// The aggregates stand in for the rows themselves, so the parameters are the set, then one
-		// per window the query has picked up.
-		final windows = rows.length - 1;
+		// per window the query has picked up — the windows come after the rows they are over.
+		final entities = EntityRows(rows);
+		final windows = rows.length - entities.length;
 		if (fn.args.length != 1 + windows) {
 			Context.error('Expected an aggregate projection taking ${1 + windows} parameter${windows == 0 ? "" : "s"}',
 				projection.pos);
@@ -683,18 +751,18 @@ class ExpressionConverter {
 
 		final bound = new Map<String, Int>();
 		bound.set(fn.args[0].name, 0);
-		final named = [for (index in 0...windows) fn.args[index + 1].name => index + 1];
+		final named = [for (index in 0...windows) fn.args[index + 1].name => entities.length + index];
 
+		// One aggregate on its own names nothing, as one expression in a projection does not.
 		final members = switch Unwrap(fn.expr).expr {
 			case EObjectDecl(fields): fields;
-			case e: Context.error('An aggregate projection is a structure, not ${Unwrap(fn.expr).toString()}',
-					projection.pos);
+			case _: [{field: "", expr: Unwrap(fn.expr)}];
 		}
 
 		final built = {
 			expr: EArrayDecl([
 				for (field in members) {
-					final value = ToAggregate(field.expr, fn.args[0].name, named, rows, query);
+					final value = ToAggregate(field.expr, fn.args[0].name, named, entities, query);
 					macro new codequery.sqlexpressions.ProjectionMember($v{field.field}, $value);
 				}
 			]),
@@ -707,15 +775,25 @@ class ExpressionConverter {
 		};
 	}
 
-	/** The parameter types an aggregate projection is typed against. */
+	/** The rows a query is over that are entities rather than windows it has defined. */
+	static function EntityRows(rows:Array<Type>):Array<Type> {
+		return rows.filter(row -> !WindowConverter.IsWindow(row));
+	}
+
+	/**
+		The parameter types an aggregate projection is typed against: the set of aggregates over
+		the query's rows — `IAggregateSet` for one row, `IAggregateSet2` for two, and so on, as
+		the C# has one per width — then a window for each the query defined.
+	**/
 	static function AggregationRows(rows:Array<Type>):Array<Type> {
-		final set = Context.getType("codequery.IAggregateSet");
+		final entities = EntityRows(rows);
+		final set = Context.getType("codequery.IAggregateSet" + (entities.length == 1 ? "" : Std.string(entities.length)));
 		final window = Context.getType("codequery.INamedWindow");
 		final typed = [switch set {
-			case TInst(t, _): TInst(t, [rows[0]]);
+			case TInst(t, _): TInst(t, entities);
 			case t: t;
 		}];
-		for (_ in 1...rows.length) {
+		for (_ in entities.length...rows.length) {
 			typed.push(window);
 		}
 		return typed;
@@ -742,7 +820,7 @@ class ExpressionConverter {
 
 			// `<aggregate>.overRows(w -> …)` — a window written out rather than named.
 			case ECall({expr: EField({expr: inner}, "overRows", _)}, [spec]):
-				final window = ConvertWindow(spec, [rows[0]]);
+				final window = ConvertWindow(spec, rows);
 				final partitionBy = window.partitionBy;
 				final orderBy = window.orderBy;
 				final frame = window.frame;
@@ -752,7 +830,7 @@ class ExpressionConverter {
 
 			// `<aggregate>.filter(r -> …)`
 			case ECall({expr: EField({expr: inner}, "filter", _)}, [predicate]):
-				final condition = Convert(predicate, [rows[0]]);
+				final condition = Convert(predicate, rows);
 				final aggregate = ToAggregate({expr: inner, pos: e.pos}, set, windows, rows, query);
 				macro $aggregate.Filtered($condition);
 
@@ -772,7 +850,12 @@ class ExpressionConverter {
 	}
 
 	static function Aggregate(fn:String, args:Array<Expr>, rows:Array<Type>, pos:Position):Expr {
-		final row = [rows[0]];
+		final row = rows;
+
+		// The group's key is not an aggregate: it is the column itself, read beside them.
+		if (fn == "key") {
+			return ConvertKey(args[0], row);
+		}
 
 		// The window functions are not aggregates and have a node of their own.
 		final windowed = WindowFunctionNamed(fn);
@@ -791,7 +874,7 @@ class ExpressionConverter {
 			return macro new codequery.sqlexpressions.AggregateSqlExpression($kind);
 		}
 		final argument = ConvertKey(args[0], row);
-		final distinct = fn == "countDistinct";
+		final distinct = fn == "countDistinct" || fn == "sumDistinct";
 		return macro new codequery.sqlexpressions.AggregateSqlExpression($kind, $argument, $v{distinct});
 	}
 
@@ -810,8 +893,8 @@ class ExpressionConverter {
 
 	static function AggregateNamed(fn:String, pos:Position):String {
 		return switch fn {
-			case "count" | "countDistinct": "Count";
-			case "sum": "Sum";
+			case "count" | "countDistinct" | "countValues": "Count";
+			case "sum" | "sumDistinct": "Sum";
 			case "avg": "Avg";
 			case "min": "Min";
 			case "max": "Max";
@@ -856,8 +939,8 @@ class ExpressionConverter {
 
 			case ECall({expr: EField(owner, call, _)}, args):
 				WalkWindow(owner, spec, rows, partitionBy, orderBy, frame);
-				if (call == "Rows" || call == "Range") {
-					final kind = macro $p{["codequery", "sqlexpressions", "FrameKind", call]};
+				if (call == "Rows" || call == "Range" || call == "RowsBetween" || call == "RangeBetween") {
+					final kind = macro $p{["codequery", "sqlexpressions", "FrameKind", call == "RowsBetween" ? "Rows" : (call == "RangeBetween" ? "Range" : call)]};
 					frame.push(macro new codequery.sqlexpressions.WindowFrame($kind, ${args[0]}, ${args[1]}));
 					return;
 				}

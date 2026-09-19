@@ -28,6 +28,34 @@ class AggregateSqlExpression implements ISqlExpression {
 		this.Filter = filter;
 	}
 
+	/** Whether it reads over a window at all — named on the statement or written out here. */
+	public var Windowed(get, never):Bool;
+
+	function get_Windowed():Bool {
+		return Window != null || Over != null;
+	}
+
+	/** The partition of a window written out here; empty for a named one, as in the C#. */
+	public var PartitionBy(get, never):Array<ISqlExpression>;
+
+	function get_PartitionBy():Array<ISqlExpression> {
+		return Over == null ? [] : Over.PartitionBy;
+	}
+
+	/** The ordering of a window written out here; empty for a named one. */
+	public var OrderBy(get, never):Array<OrderByExpression>;
+
+	function get_OrderBy():Array<OrderByExpression> {
+		return Over == null ? [] : Over.OrderBy;
+	}
+
+	/** The frame of a window written out here, if it has one. */
+	public var Frame(get, never):Null<WindowFrame>;
+
+	function get_Frame():Null<WindowFrame> {
+		return Over == null ? null : Over.Frame;
+	}
+
 	/** `COUNT(*)`. */
 	public static function Count():AggregateSqlExpression {
 		return new AggregateSqlExpression(AggregateType.Count);

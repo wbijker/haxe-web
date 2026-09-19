@@ -25,6 +25,7 @@ import codequery.sqlexpressions.WindowDefinition;
 import codequery.sqlexpressions.WindowFrame;
 import codequery.sqlexpressions.WindowFunctionExpression;
 import codequery.sqlexpressions.DeleteExpression;
+import codequery.sqlexpressions.DistinctSqlExpression;
 import codequery.sqlexpressions.ISqlStatement;
 import codequery.sqlexpressions.InsertExpression;
 import codequery.sqlexpressions.UpdateExpression;
@@ -325,6 +326,12 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 			return '(${Against(query.Query.AllSources(), () -> Statement(query.Query))}) AS ${Named(query)}';
 		}
 
+		final values = Std.downcast(cast source, codequery.sqlexpressions.ValueSqlSource);
+		if (values != null) {
+			final rows = values.Rows.map(row -> '(${row.map(RenderExpression).join(", ")})').join(", ");
+			return '(VALUES $rows) AS ${Named(values)}(${values.ColumnNames.join(", ")})';
+		}
+
 		throw 'Cannot render a source of ${Type.getClassName(Type.getClass(source))}';
 	}
 
@@ -484,6 +491,11 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 
 	public function OnFunction(e:SqlFunctionExpression):String {
 		final arguments = e.Arguments.map(RenderExpression);
+		if (e.WithinGroup != null) {
+			// Ascending is the default and is left unsaid, as the C# leaves it.
+			final ordered = e.WithinGroup.map(term -> term.Ascending ? RenderExpression(term.Expression) : RenderOrderBy(term));
+			return '${e.Name}(${arguments.join(", ")}) WITHIN GROUP (ORDER BY ${ordered.join(", ")})';
+		}
 		return e.Infix ? arguments.join(' ${e.Name} ') : '${e.Name}(${arguments.join(", ")})';
 	}
 
@@ -535,6 +547,10 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 			case Lag: "LAG";
 			case FirstValue: "FIRST_VALUE";
 			case LastValue: "LAST_VALUE";
+			case Ntile: "NTILE";
+			case NthValue: "NTH_VALUE";
+			case PercentRank: "PERCENT_RANK";
+			case CumeDist: "CUME_DIST";
 		}
 		// A window function only means anything over a window, so it always has one.
 		final over = e.Window != null ? e.Window.Name : RenderOver(e.Over);
@@ -543,6 +559,10 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 
 	public function OnOrderBy(e:OrderByExpression):String {
 		return RenderOrderBy(e);
+	}
+
+	public function OnDistinct(e:DistinctSqlExpression):String {
+		return 'DISTINCT ${RenderExpression(e.Value)}';
 	}
 
 	/** A window written out where it is used, rather than named on the statement. */
@@ -588,7 +608,8 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 		return switch change {
 			case CreateTable(table):
 				final columns = table.Columns.map(ColumnDefinition).join(", ");
-				'CREATE TABLE ${table.Name} ($columns)';
+				final kind = table.Temporary ? "TEMPORARY " : (table.Unlogged ? "UNLOGGED " : "");
+				'CREATE ${kind}TABLE ${table.Name} ($columns)';
 
 			case DropTable(table):
 				'DROP TABLE ${table.Name}';
@@ -626,6 +647,9 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 			case SqlDate: "DATE";
 			case SqlTimestamp: "TIMESTAMP";
 			case SqlUnknown: throw "A cast needs a type to cast to";
+			case SqlSmallInt: "SMALLINT";
+			case SqlReal: "REAL";
+			case SqlNamed(name): name;
 		}
 	}
 
@@ -642,6 +666,9 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 	}
 
 	function RenderAggregate(aggregate:AggregateSqlExpression):String {
+		if (Std.isOfType(aggregate, codequery.sqlexpressions.UnfinishedAggregateSqlExpression)) {
+			throw codequery.sqlexpressions.UnfinishedAggregateSqlExpression.Message;
+		}
 		final name = switch aggregate.Type {
 			case Count: "COUNT";
 			case Sum: "SUM";
@@ -675,6 +702,9 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 		}
 		if (window.OrderBy.length > 0) {
 			parts.push('ORDER BY ${window.OrderBy.map(RenderOrderBy).join(", ")}');
+		}
+		if (window.Frame != null) {
+			parts.push(RenderFrame(window.Frame));
 		}
 		return '${window.Name} AS (${parts.join(" ")})';
 	}

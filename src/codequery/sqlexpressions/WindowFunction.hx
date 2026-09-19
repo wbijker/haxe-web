@@ -9,4 +9,8 @@ enum WindowFunction {
 	Lag;
 	FirstValue;
 	LastValue;
+	Ntile;
+	NthValue;
+	PercentRank;
+	CumeDist;
 }
