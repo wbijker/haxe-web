@@ -1,11 +1,16 @@
 package codequery.sqldrivers;
 
+import codequery.sqlexpressions.AggregateSqlExpression;
 import codequery.sqlexpressions.BinarySqlExpression;
 import codequery.sqlexpressions.ColumnSqlExpression;
 import codequery.sqlexpressions.ConstSqlExpression;
 import codequery.sqlexpressions.ISqlExpression;
-import codequery.sqlexpressions.NullsOrdering;
+import codequery.sqlexpressions.ISqlSource;
+import codequery.sqlexpressions.JoinSqlExpression;
+import codequery.sqlexpressions.JoinType;
 import codequery.sqlexpressions.OrderByExpression;
+import codequery.sqlexpressions.ParameterSqlSource;
+import codequery.sqlexpressions.QuerySqlSource;
 import codequery.sqlexpressions.SelectExpression;
 import codequery.sqlexpressions.SqlBinaryOperator;
 import codequery.sqlexpressions.SqlConstValue;
@@ -13,24 +18,26 @@ import codequery.sqlexpressions.TableSqlSource;
 
 /**
 	Renders a statement as SQL. The C# original splits this into an `ISqlTranslator` that renders
-	and an `ISqlDriver` that also knows where to send the result; only the rendering half is here,
-	and only what a SELECT with a WHERE needs of it.
+	and an `ISqlDriver` that also knows where to send the result; only the rendering half is here.
 **/
 class SqlDriver {
+	/**
+		The statement being rendered, in the order a lambda's parameters bind to its sources. A
+		generated column names its source by position, so rendering one is a lookup here.
+	**/
+	var sources:Array<ISqlSource> = [];
+
 	public function new() {}
 
 	public function ToSql(expression:SelectExpression):String {
-		final source = Std.downcast(cast expression.Source, TableSqlSource);
-		if (source == null) {
-			throw "Only a table source is supported so far";
+		// Each statement renders against its own sources; a subquery restores the outer ones after.
+		final outer = sources;
+		sources = expression.AllSources();
+
+		var sql = 'SELECT${Distinct(expression)} ${Selection(expression)} FROM ${Source(expression.Source)}';
+		for (join in expression.Joins) {
+			sql += " " + Join(join);
 		}
-
-		// A table that carries its own name as its alias is just the table.
-		final from = source.Alias == source.Table.Name
-			? '${source.Table}'
-			: '${source.Table} AS ${source.Alias}';
-
-		var sql = 'SELECT${Distinct(expression)} * FROM $from';
 		if (expression.Where != null) {
 			sql += ' WHERE ${RenderExpression(expression.Where)}';
 		}
@@ -38,7 +45,44 @@ class SqlDriver {
 			sql += ' ORDER BY ${expression.OrderBy.map(RenderOrderBy).join(", ")}';
 		}
 		sql += RowLimit(expression);
+
+		sources = outer;
 		return sql;
+	}
+
+	function Selection(expression:SelectExpression):String {
+		return expression.Selection == null ? "*" : RenderExpression(expression.Selection);
+	}
+
+	function Source(source:ISqlSource):String {
+		final table = Std.downcast(cast source, TableSqlSource);
+		if (table != null) {
+			return '${table.Table} AS ${table.Alias}';
+		}
+
+		final query = Std.downcast(cast source, QuerySqlSource);
+		if (query != null) {
+			return '(${ToSql(query.Query)}) AS ${query.Alias}';
+		}
+
+		throw 'Cannot render a source of ${Type.getClassName(Type.getClass(source))}';
+	}
+
+	function Join(join:JoinSqlExpression):String {
+		final sql = '${JoinKeyword(join.Type)} ${Source(join.Source)}';
+		return join.On == null ? sql : '$sql ON ${RenderExpression(join.On)}';
+	}
+
+	function JoinKeyword(type:JoinType):String {
+		return switch type {
+			case Inner: "INNER JOIN";
+			case Left: "LEFT JOIN";
+			case Right: "RIGHT JOIN";
+			case Outer: "FULL OUTER JOIN";
+			case Cross: "CROSS JOIN";
+			case CrossLateral: "CROSS JOIN LATERAL";
+			case LeftLateral: "LEFT JOIN LATERAL";
+		}
 	}
 
 	function Distinct(expression:SelectExpression):String {
@@ -87,12 +131,12 @@ class SqlDriver {
 
 	/**
 		The C# original dispatches through `ISqlExpressionVisitor`; a downcast chain says the same
-		thing for the three node kinds that exist so far.
+		thing for the node kinds that exist so far.
 	**/
 	function RenderExpression(e:ISqlExpression):String {
 		final column = Std.downcast(cast e, ColumnSqlExpression);
 		if (column != null) {
-			return '${column.Source.Alias}.${column.ColumnName}';
+			return '${AliasOf(column.Source)}.${column.ColumnName}';
 		}
 
 		final constant = Std.downcast(cast e, ConstSqlExpression);
@@ -105,7 +149,30 @@ class SqlDriver {
 			return '${Operand(binary, binary.Left)} ${RenderOperator(binary.Operator)} ${Operand(binary, binary.Right)}';
 		}
 
+		final aggregate = Std.downcast(cast e, AggregateSqlExpression);
+		if (aggregate != null) {
+			return switch aggregate.Function {
+				case CountRows: "COUNT(*)";
+			}
+		}
+
 		throw 'Cannot render ${Type.getClassName(Type.getClass(e))}';
+	}
+
+	/**
+		The alias a column renders under. A generated column names its source by the position of the
+		lambda parameter it was reached through, which is only meaningful against a statement — so
+		this is where the two are put together.
+	**/
+	function AliasOf(source:ISqlSource):String {
+		final parameter = Std.downcast(cast source, ParameterSqlSource);
+		if (parameter == null) {
+			return source.Alias;
+		}
+		if (parameter.Index >= sources.length) {
+			throw 'This statement has ${sources.length} source(s), so it has no row ${parameter.Index}';
+		}
+		return sources[parameter.Index].Alias;
 	}
 
 	/** Parenthesise a child only where precedence needs it. */

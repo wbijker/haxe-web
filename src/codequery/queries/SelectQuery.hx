@@ -2,12 +2,14 @@ package codequery.queries;
 
 import codequery.sqlexpressions.BinarySqlExpression;
 import codequery.sqlexpressions.ISqlExpression;
+import codequery.sqlexpressions.JoinSqlExpression;
+import codequery.sqlexpressions.JoinType;
 import codequery.sqlexpressions.NullsOrdering;
 import codequery.sqlexpressions.OrderByExpression;
 import codequery.sqlexpressions.SelectExpression;
 import codequery.sqlexpressions.SourceContext;
+import codequery.sqlexpressions.ISqlSource;
 import codequery.sqlexpressions.SqlBinaryOperator;
-import codequery.sqlexpressions.TableSqlSource;
 
 /** The implementation behind `ISelectQuery`. */
 class SelectQuery<T1> implements ISelectQueryRuntime<T1> {
@@ -20,11 +22,10 @@ class SelectQuery<T1> implements ISelectQueryRuntime<T1> {
 		this.context = context;
 	}
 
-	/** Starts a query over a table. */
-	public static function OverSource<T>(source:TableSqlSource):SelectQuery<T> {
+	/** Starts a query over a table, which takes the first alias. */
+	public static function OverTable<T>(table:QualifiedTableName):SelectQuery<T> {
 		final context = new SourceContext();
-		context.Add(source);
-		return new SelectQuery<T>(new SelectExpression(source), context);
+		return new SelectQuery<T>(new SelectExpression(context.AddTableSource(table)), context);
 	}
 
 	public function ToExpression():SelectExpression {
@@ -73,6 +74,30 @@ class SelectQuery<T1> implements ISelectQueryRuntime<T1> {
 
 	public function Percent():ISelectQuery<T1> {
 		return Fork(expression -> expression.Percent = true);
+	}
+
+	public function JoinTable<T2>(type:JoinType, table:IQuery<T2>, on:Null<ISqlExpression>):ISelectQuery2<T1, T2> {
+		final context = this.context.Fork();
+		return Joined(type, context.AddTableSource(table.Table), on, context);
+	}
+
+	public function JoinQuery<T2>(type:JoinType, source:ISelectQuery<T2>, on:Null<ISqlExpression>):ISelectQuery2<T1, T2> {
+		final context = this.context.Fork();
+		return Joined(type, context.AddQuerySource(source.ToExpression()), on, context);
+	}
+
+	function Joined<T2>(type:JoinType, source:ISqlSource, on:Null<ISqlExpression>, context:SourceContext):ISelectQuery2<T1, T2> {
+		final expression = SelectExpression.Fork();
+		expression.Joins.push(new JoinSqlExpression(type, source, on));
+		return new SelectQuery2<T1, T2>(expression, context);
+	}
+
+	public function CountExpression():SelectExpression {
+		return RowCount.Counting(SelectExpression, context);
+	}
+
+	public function Count():Int {
+		return RowCount.Unavailable();
 	}
 
 	/** A clause answers with a query of its own; the one it was asked of is unchanged. */

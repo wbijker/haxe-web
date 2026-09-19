@@ -8,33 +8,56 @@ class Main {
 	static final driver = new SqlDriver();
 
 	static function main() {
-		// The predicate never becomes a closure: it is converted to a SQL expression tree while
-		// compiling, and its columns resolve to the generated statics.
+		// A lambda's parameter names a row by position, so a column knows which source it belongs
+		// to without the statement having to be built first.
 		show(db.Deliveries.From().Where(a -> a.id == 12));
 
-		// Every clause answers with a query of its own, so they chain.
 		show(db.Deliveries.From()
 			.Where(a -> a.status == 6)
-			.Where(a -> a.noteNo != "")
 			.OrderBy(a -> a.noteNo)
 			.OrderByDesc(a -> a.id)
 			.Limit(10)
 			.Offset(20));
 
-		// DISTINCT, and DISTINCT ON a composite key.
-		show(db.Deliveries.From().Distinct().OrderBy(a -> a.id));
 		show(db.Deliveries.From()
 			.Distinct(a -> a.fromStoreId)
-			.Distinct(a -> a.toStoreId)
-			.OrderBy(a -> a.fromStoreId, NullsOrdering.Last)
-			.OrderByDesc(a -> a.id, NullsOrdering.First));
+			.OrderBy(a -> a.fromStoreId, NullsOrdering.Last));
 
-		// Ties and percentages cannot be said with LIMIT, so they are rendered the long way.
-		show(db.Deliveries.From().OrderByDesc(a -> a.id).Limit(5).WithTies());
-		show(db.Deliveries.From().OrderBy(a -> a.id).Limit(10).Offset(100).Percent());
+		// Joining a table: the condition is written over both rows, in the order they were joined.
+		show2(db.Deliveries.From()
+			.InnerJoin(db.Lines, (d, l) -> d.id == l.deliveryId)
+			.Where((d, l) -> l.quantity > 0)
+			.OrderBy((d, l) -> l.itemCode));
+
+		// A table joined to itself: two sources, so the same column has to render two ways.
+		show2(db.Deliveries.From()
+			.LeftJoin(db.Deliveries, (a, b) -> a.purchaseOrderId == b.purchaseOrderId && a.id != b.id));
+
+		// Joining a query rather than a table puts it in as a subquery.
+		show2(db.Deliveries.From()
+			.InnerJoin(db.Lines.From().Where(l -> l.quantity > 100), (d, l) -> d.id == l.deliveryId));
+
+		show2(db.Deliveries.From().CrossJoin(db.Lines));
+
+		// Counting. A query that counts what it reads selects COUNT(*) in place of its rows.
+		Sys.println("");
+		Sys.println(driver.ToSql(db.Deliveries.From().Where(a -> a.id > 12).OrderBy(a -> a.id).CountExpression()));
+		// One narrowed by DISTINCT or a limit has to be counted from the outside.
+		Sys.println(driver.ToSql(db.Deliveries.From().Distinct(a -> a.fromStoreId).CountExpression()));
+		Sys.println(driver.ToSql(db.Deliveries.From().Limit(10).CountExpression()));
+
+		try {
+			db.Deliveries.From().Count();
+		} catch (e:String) {
+			Sys.println('Count(): $e');
+		}
 	}
 
 	static function show(query:codequery.queries.ISelectQuery<model.Delivery>) {
+		Sys.println(driver.ToSql(query.ToExpression()));
+	}
+
+	static function show2<A, B>(query:codequery.queries.ISelectQuery2<A, B>) {
 		Sys.println(driver.ToSql(query.ToExpression()));
 	}
 }

@@ -1,6 +1,7 @@
 package codequery.queries;
 
 import codequery.sqlexpressions.ISqlExpression;
+import codequery.sqlexpressions.JoinType;
 import codequery.sqlexpressions.NullsOrdering;
 import codequery.sqlexpressions.SelectExpression;
 
@@ -28,6 +29,12 @@ interface ISelectQueryRuntime<T1> {
 	/** What the `OrderBy` family compiles down to. */
 	function OrderByKey(key:ISqlExpression, ascending:Bool, nulls:NullsOrdering):ISelectQuery<T1>;
 
+	/** What the join family compiles down to when the source is a table. */
+	function JoinTable<T2>(type:JoinType, table:IQuery<T2>, on:Null<ISqlExpression>):ISelectQuery2<T1, T2>;
+
+	/** What the join family compiles down to when the source is another query. */
+	function JoinQuery<T2>(type:JoinType, source:ISelectQuery<T2>, on:Null<ISqlExpression>):ISelectQuery2<T1, T2>;
+
 	/** At most `count` rows. */
 	function Limit(count:Int):ISelectQuery<T1>;
 
@@ -42,4 +49,15 @@ interface ISelectQueryRuntime<T1> {
 
 	/** The statement built so far. */
 	function ToExpression():SelectExpression;
+
+	/**
+		The statement that counts this one's rows — what `Count` would run.
+
+		Not in the C# API, where counting only ever runs; it is separated out here because rendering
+		is all this port can do until a driver can execute.
+	**/
+	function CountExpression():SelectExpression;
+
+	/** How many rows the query has. Runs the query, so it needs a connection to run it against. */
+	function Count():Int;
 }
