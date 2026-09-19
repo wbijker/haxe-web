@@ -23,7 +23,10 @@ class SqlDriver {
 			throw "Only a table source is supported so far";
 		}
 
-		var sql = 'SELECT * FROM ${source.Table} AS ${source.Alias}';
+		// A table that carries its own name as its alias is just the table.
+		var sql = source.Alias == source.Table.Name
+			? 'SELECT * FROM ${source.Table}'
+			: 'SELECT * FROM ${source.Table} AS ${source.Alias}';
 		if (expression.Where != null) {
 			sql += ' WHERE ${RenderExpression(expression.Where)}';
 		}

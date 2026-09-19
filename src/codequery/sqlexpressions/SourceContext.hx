@@ -12,10 +12,13 @@ class SourceContext {
 		return "t" + aliasCounter++;
 	}
 
-	public function AddTableSource(table:QualifiedTableName):TableSqlSource {
-		final source = new TableSqlSource(table, GenerateAlias());
+	/**
+		Registers a source. A table brings its own source — and with it the name its columns are
+		qualified by — from the entity's generated columns type, so nothing is aliased here yet;
+		`GenerateAlias` is waiting for the first statement that names one table twice.
+	**/
+	public function Add(source:ISqlSource):Void {
 		Sources.push(source);
-		return source;
 	}
 
 	/** A copy, so that adding a clause never disturbs the query it was asked of. */

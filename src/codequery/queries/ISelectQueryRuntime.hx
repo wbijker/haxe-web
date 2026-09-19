@@ -1,7 +1,6 @@
 package codequery.queries;
 
 import codequery.sqlexpressions.ISqlExpression;
-import codequery.sqlexpressions.ISqlSource;
 import codequery.sqlexpressions.SelectExpression;
 
 /**
@@ -14,10 +13,9 @@ import codequery.sqlexpressions.SelectExpression;
 interface ISelectQueryRuntime<T1> {
 	/**
 		Adds a condition already converted to SQL. `ISelectQuery.Where` is what callers use; this is
-		what it compiles down to, and it takes the converted predicate as a function of the
-		statement's sources, since which source a lambda parameter stands for is known only here.
+		what it compiles down to.
 	**/
-	function WhereCondition(condition:Array<ISqlSource>->ISqlExpression):ISelectQuery<T1>;
+	function WhereCondition(condition:ISqlExpression):ISelectQuery<T1>;
 
 	/** The statement built so far. */
 	function ToExpression():SelectExpression;

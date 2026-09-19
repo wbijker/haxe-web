@@ -17,10 +17,10 @@ using haxe.macro.TypeTools;
 	runtime expression trees, so the conversion happens during compilation: the lambda never becomes
 	a closure, it becomes the code that builds the `ISqlExpression` tree the statement carries.
 
-	A lambda parameter stands for one of the statement's sources, and which source that is, is only
-	known once the statement runs. So a converted predicate is emitted as a function of the sources:
-	`Array<ISqlSource> -> ISqlExpression`, applied by the query against its own sources — the same
-	binding C# does through `SourceContext`.
+	A column resolves to a static member of the entity's generated columns type (see
+	`ColumnsBuilder`), so what a predicate compiles to is a reference and not a column built afresh
+	on each call. Nothing in it depends on the statement it lands in, so the whole condition is built
+	where it is written — there is no closure.
 **/
 class ExpressionConverter {
 	#if macro
@@ -41,10 +41,9 @@ class ExpressionConverter {
 			Context.error("A predicate over one table takes exactly one parameter", predicate.pos);
 		}
 
-		// Parameter 0 is the statement's first source, exactly as in the C# converter.
+		// The parameter names the row the predicate is written over.
 		final aliases = [fn.args[0].name => 0];
-		final body = ToSqlExpression(fn.expr, aliases, entity);
-		return macro(sources : Array<codequery.sqlexpressions.ISqlSource>) -> $body;
+		return ToSqlExpression(fn.expr, aliases, entity);
 	}
 
 	/**
@@ -84,9 +83,7 @@ class ExpressionConverter {
 			case EField(owner, field, _):
 				switch Unwrap(owner).expr {
 					case EConst(CIdent(name)) if (aliases.exists(name)):
-						final index = aliases[name];
-						final column = ColumnOf(field, entity, e.pos);
-						macro new codequery.sqlexpressions.ColumnSqlExpression(sources[$v{index}], $v{column});
+						ColumnsBuilder.Member(ColumnsBuilder.Of(entity), ColumnOf(field, entity, e.pos));
 					case _:
 						Context.error('Only a column of the row this predicate is written over can be used here', e.pos);
 				}
@@ -139,8 +136,9 @@ class ExpressionConverter {
 	}
 
 	/**
-		The column a field maps to: its `@columnName`, else the field's own name — the same rule the
-		C# inspector applies to a property. Checked against the row type, so a typo is a compile error.
+		Checks that the row really has this field, so that a typo is a compile error here rather than
+		a confusing one about the generated columns type. Answers with the field's own name, which is
+		what that type calls its member; the column name it maps to is settled there.
 	**/
 	static function ColumnOf(field:String, entity:Type, pos:Position):String {
 		final row = switch entity.follow() {
@@ -149,11 +147,7 @@ class ExpressionConverter {
 		}
 		for (f in row.fields.get()) {
 			if (f.name == field) {
-				final named = f.meta.extract("columnName");
-				return switch named {
-					case [{params: [{expr: EConst(CString(name, _))}]}]: name;
-					case _: f.name;
-				}
+				return f.name;
 			}
 		}
 		return Context.error('${row.name} has no field "$field"', pos);

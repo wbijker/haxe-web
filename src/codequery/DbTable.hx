@@ -3,6 +3,8 @@ package codequery;
 import codequery.queries.IQuery;
 import codequery.queries.ISelectQuery;
 import codequery.queries.SelectQuery;
+import codequery.sqlexpressions.ColumnsBuilder;
+import codequery.sqlexpressions.TableSqlSource;
 #if macro
 import haxe.macro.Context;
 import haxe.macro.Expr;
@@ -23,11 +25,21 @@ using haxe.macro.TypeTools;
 	resolves it while compiling, from the type the member is declared as.
 **/
 class DbTable<T> implements IQuery<T> {
-	/** The table, name and schema together, as every statement over it needs both. */
-	public final Table:QualifiedTableName;
+	/**
+		The table as the statement names it — the same source the entity's generated columns are
+		bound to, so a column and the FROM it belongs to cannot drift apart.
+	**/
+	public final Source:TableSqlSource;
 
-	public function new(table:QualifiedTableName) {
-		this.Table = table;
+	/** The table, name and schema together, as every statement over it needs both. */
+	public var Table(get, never):QualifiedTableName;
+
+	function get_Table():QualifiedTableName {
+		return Source.Table;
+	}
+
+	public function new(source:TableSqlSource) {
+		this.Source = source;
 	}
 
 	/** The table name, unqualified. `Table` is the one to pass on, since a name alone loses the schema. */
@@ -38,7 +50,7 @@ class DbTable<T> implements IQuery<T> {
 	}
 
 	public function From():ISelectQuery<T> {
-		return SelectQuery.OverTable(Table);
+		return SelectQuery.OverSource(Source);
 	}
 
 	/**
@@ -57,21 +69,8 @@ class DbTable<T> implements IQuery<T> {
 			case t: Context.error('DbTable.of() expected a DbTable<T>, got ${t.toString()}', Context.currentPos());
 		}
 
-		final name = TableNameOf(entity);
-		return macro new codequery.DbTable(new codequery.QualifiedTableName($v{name}));
+		final columns = ColumnsBuilder.Of(entity);
+		final source = ColumnsBuilder.Member(columns, "Source");
+		return macro new codequery.DbTable($source);
 	}
-
-	#if macro
-	/** The entity's `@tableName`, else the type's own name — the rule the C# inspector applies. */
-	static function TableNameOf(entity:Type):String {
-		final row = switch entity.follow() {
-			case TInst(t, _): t.get();
-			case t: Context.error('${t.toString()} is not an entity class', Context.currentPos());
-		}
-		return switch row.meta.extract("tableName") {
-			case [{params: [{expr: EConst(CString(name, _))}]}]: name;
-			case _: row.name;
-		}
-	}
-	#end
 }

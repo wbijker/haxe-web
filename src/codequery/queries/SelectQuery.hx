@@ -2,10 +2,10 @@ package codequery.queries;
 
 import codequery.sqlexpressions.BinarySqlExpression;
 import codequery.sqlexpressions.ISqlExpression;
-import codequery.sqlexpressions.ISqlSource;
 import codequery.sqlexpressions.SelectExpression;
 import codequery.sqlexpressions.SourceContext;
 import codequery.sqlexpressions.SqlBinaryOperator;
+import codequery.sqlexpressions.TableSqlSource;
 
 /** The implementation behind `ISelectQuery`. */
 class SelectQuery<T1> implements ISelectQueryRuntime<T1> {
@@ -19,22 +19,22 @@ class SelectQuery<T1> implements ISelectQueryRuntime<T1> {
 	}
 
 	/** Starts a query over a table. */
-	public static function OverTable<T>(table:QualifiedTableName):SelectQuery<T> {
+	public static function OverSource<T>(source:TableSqlSource):SelectQuery<T> {
 		final context = new SourceContext();
-		return new SelectQuery<T>(new SelectExpression(context.AddTableSource(table)), context);
+		context.Add(source);
+		return new SelectQuery<T>(new SelectExpression(source), context);
 	}
 
 	public function ToExpression():SelectExpression {
 		return SelectExpression;
 	}
 
-	public function WhereCondition(condition:Array<ISqlSource>->ISqlExpression):ISelectQuery<T1> {
+	public function WhereCondition(condition:ISqlExpression):ISelectQuery<T1> {
 		// A clause answers with a query of its own; the one it was asked of is unchanged.
 		final expression = SelectExpression.Fork();
-		final context = this.context.Fork();
 
-		AndWhere(expression, condition(context.Sources));
-		return new SelectQuery<T1>(expression, context);
+		AndWhere(expression, condition);
+		return new SelectQuery<T1>(expression, context.Fork());
 	}
 
 	/** Successive Where calls accumulate, as they do in the C# original. */
