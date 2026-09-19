@@ -81,34 +81,65 @@ class ColumnsBuilder {
 
 	static function Fields(row:ClassType, path:TypePath):Array<Field> {
 		final table = TableNameOf(row);
+		final fields:Array<Field> = [];
+
+		LazyStatic(fields, "Source", macro :codequery.sqlexpressions.TableSqlSource,
+			macro new codequery.sqlexpressions.TableSqlSource(new codequery.QualifiedTableName($v{table}), $v{table}),
+			row.pos, "The table these columns belong to.");
+
 		final source = Member(path, "Source");
-
-		final fields:Array<Field> = [
-			{
-				name: "Source",
-				access: [APublic, AStatic, AFinal],
-				pos: row.pos,
-				doc: "The table these columns belong to.",
-				kind: FVar(macro :codequery.sqlexpressions.TableSqlSource,
-					macro new codequery.sqlexpressions.TableSqlSource(new codequery.QualifiedTableName($v{table}), $v{table}))
-			}
-		];
-
 		for (field in row.fields.get()) {
 			if (!IsColumn(field)) {
 				continue;
 			}
-			fields.push({
-				name: field.name,
-				access: [APublic, AStatic, AFinal],
-				pos: field.pos,
-				doc: 'The ${ColumnNameOf(field)} column.',
-				kind: FVar(macro :codequery.sqlexpressions.ColumnSqlExpression,
-					macro new codequery.sqlexpressions.ColumnSqlExpression($source, $v{ColumnNameOf(field)}))
-			});
+			final column = ColumnNameOf(field);
+			LazyStatic(fields, field.name, macro :codequery.sqlexpressions.ColumnSqlExpression,
+				macro new codequery.sqlexpressions.ColumnSqlExpression($source, $v{column}),
+				field.pos, 'The $column column.');
 		}
 
 		return fields;
+	}
+
+	/**
+		Adds a static built the first time it is asked for.
+
+		Haxe runs static initialisers in the order it generated the types, and a type that uses
+		these columns can be generated before them — a `static final db = new SampleDb()` in the
+		entry point is enough — which would read them as null. Building on first use puts the order
+		beyond doubt.
+	**/
+	static function LazyStatic(into:Array<Field>, name:String, type:ComplexType, build:Expr, pos:Position, doc:String):Void {
+		final held = macro $i{"_" + name};
+
+		into.push({
+			name: "_" + name,
+			access: [AStatic],
+			pos: pos,
+			kind: FVar(type, null)
+		});
+		into.push({
+			name: name,
+			access: [APublic, AStatic],
+			pos: pos,
+			doc: doc,
+			kind: FProp("get", "never", type)
+		});
+		into.push({
+			name: "get_" + name,
+			access: [AStatic],
+			pos: pos,
+			kind: FFun({
+				args: [],
+				ret: type,
+				expr: macro {
+					if ($held == null) {
+						$held = $build;
+					}
+					return $held;
+				}
+			})
+		});
 	}
 
 	/** A public instance variable is a column; methods and properties with accessors are not. */

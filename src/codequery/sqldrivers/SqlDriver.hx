@@ -4,6 +4,8 @@ import codequery.sqlexpressions.BinarySqlExpression;
 import codequery.sqlexpressions.ColumnSqlExpression;
 import codequery.sqlexpressions.ConstSqlExpression;
 import codequery.sqlexpressions.ISqlExpression;
+import codequery.sqlexpressions.NullsOrdering;
+import codequery.sqlexpressions.OrderByExpression;
 import codequery.sqlexpressions.SelectExpression;
 import codequery.sqlexpressions.SqlBinaryOperator;
 import codequery.sqlexpressions.SqlConstValue;
@@ -24,11 +26,61 @@ class SqlDriver {
 		}
 
 		// A table that carries its own name as its alias is just the table.
-		var sql = source.Alias == source.Table.Name
-			? 'SELECT * FROM ${source.Table}'
-			: 'SELECT * FROM ${source.Table} AS ${source.Alias}';
+		final from = source.Alias == source.Table.Name
+			? '${source.Table}'
+			: '${source.Table} AS ${source.Alias}';
+
+		var sql = 'SELECT${Distinct(expression)} * FROM $from';
 		if (expression.Where != null) {
 			sql += ' WHERE ${RenderExpression(expression.Where)}';
+		}
+		if (expression.OrderBy.length > 0) {
+			sql += ' ORDER BY ${expression.OrderBy.map(RenderOrderBy).join(", ")}';
+		}
+		sql += RowLimit(expression);
+		return sql;
+	}
+
+	function Distinct(expression:SelectExpression):String {
+		if (expression.DistinctOn.length > 0) {
+			return ' DISTINCT ON (${expression.DistinctOn.map(RenderExpression).join(", ")})';
+		}
+		return expression.IsDistinct ? " DISTINCT" : "";
+	}
+
+	function RenderOrderBy(term:OrderByExpression):String {
+		final sql = '${RenderExpression(term.Expression)} ${term.Ascending ? "ASC" : "DESC"}';
+		return switch term.Nulls {
+			case Default: sql;
+			case First: '$sql NULLS FIRST';
+			case Last: '$sql NULLS LAST';
+		}
+	}
+
+	/**
+		`LIMIT`/`OFFSET` says it in the fewest words, but neither can express ties or a percentage,
+		so a query asking for either is rendered in the standard's longer form instead.
+	**/
+	function RowLimit(expression:SelectExpression):String {
+		if (!expression.WithTies && !expression.Percent) {
+			var sql = "";
+			if (expression.Limit != null) {
+				sql += ' LIMIT ${expression.Limit}';
+			}
+			if (expression.Offset != null) {
+				sql += ' OFFSET ${expression.Offset}';
+			}
+			return sql;
+		}
+
+		var sql = "";
+		if (expression.Offset != null) {
+			sql += ' OFFSET ${expression.Offset} ROWS';
+		}
+		if (expression.Limit != null) {
+			final percent = expression.Percent ? " PERCENT" : "";
+			final ties = expression.WithTies ? "WITH TIES" : "ONLY";
+			sql += ' FETCH NEXT ${expression.Limit}$percent ROWS $ties';
 		}
 		return sql;
 	}

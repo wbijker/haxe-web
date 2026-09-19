@@ -31,32 +31,45 @@ class ExpressionConverter {
 		it so that an editor can see inside the lambda and so the body is type-checked.
 	**/
 	public static function Convert(predicate:Expr, entity:Type):Expr {
-		TypePredicate(predicate, entity);
+		return ConvertLambda(predicate, entity, macro :Bool, "a predicate, e.g. a -> a.id == 12");
+	}
 
-		final fn = switch predicate.expr {
+	/**
+		Convert a key selector — `a -> a.id`, the `SqlKeySelector` of the C# API — into an
+		expression building its `ISqlExpression`. Any expression will do, not only a column.
+	**/
+	public static function ConvertKey(selector:Expr, entity:Type):Expr {
+		// The key is whatever the column is; only the row being typed matters here.
+		return ConvertLambda(selector, entity, macro :Dynamic, "a key selector, e.g. a -> a.id");
+	}
+
+	static function ConvertLambda(lambda:Expr, entity:Type, returns:ComplexType, expected:String):Expr {
+		TypeLambda(lambda, entity, returns);
+
+		final fn = switch lambda.expr {
 			case EFunction(_, f): f;
-			case _: Context.error("A predicate must be a lambda, e.g. a -> a.id == 12", predicate.pos);
+			case _: Context.error('Expected $expected', lambda.pos);
 		}
 		if (fn.args.length != 1) {
-			Context.error("A predicate over one table takes exactly one parameter", predicate.pos);
+			Context.error('Expected $expected, taking exactly one parameter', lambda.pos);
 		}
 
-		// The parameter names the row the predicate is written over.
+		// The parameter names the row the lambda is written over.
 		final aliases = [fn.args[0].name => 0];
 		return ToSqlExpression(fn.expr, aliases, entity);
 	}
 
 	/**
-		Type the predicate against `entity -> Bool` and throw the result away.
+		Type the lambda against the row it is written over and throw the result away.
 
 		Nothing else types it — the tree is read as syntax — and Haxe answers completion, hover and
 		go-to-definition while *typing* an expression. Without this an editor has nothing to offer
 		inside the lambda. The typed expression is discarded, so none of it reaches the output.
 	**/
-	static function TypePredicate(predicate:Expr, entity:Type):Void {
+	static function TypeLambda(lambda:Expr, entity:Type, returns:ComplexType):Void {
 		final row = entity.toComplexType();
-		final signature = ComplexType.TFunction([row], macro :Bool);
-		Context.typeExpr(macro @:pos(predicate.pos) ($predicate : $signature));
+		final signature = ComplexType.TFunction([row], returns);
+		Context.typeExpr(macro @:pos(lambda.pos) ($lambda : $signature));
 	}
 
 	/** Strip the syntax that carries no meaning for the conversion. */
@@ -151,6 +164,14 @@ class ExpressionConverter {
 			}
 		}
 		return Context.error('${row.name} has no field "$field"', pos);
+	}
+
+	/** The nulls ordering an `OrderBy` was given, or `Default` where it was left out. */
+	public static function NullsOrDefault(nulls:Null<Expr>):Expr {
+		if (nulls == null || nulls.expr.match(EConst(CIdent("null")))) {
+			return macro codequery.sqlexpressions.NullsOrdering.Default;
+		}
+		return nulls;
 	}
 
 	/** The row type a query is over, read from the static type of the query itself. */
