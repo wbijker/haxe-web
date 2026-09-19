@@ -27,6 +27,12 @@ import codequery.sqlexpressions.WindowFunctionExpression;
 import codequery.sqlexpressions.DeleteExpression;
 import codequery.sqlexpressions.ISqlStatement;
 import codequery.sqlexpressions.InsertExpression;
+import codequery.sqlexpressions.MergeExpression;
+import codequery.sqlexpressions.MergeAction;
+import codequery.sqlexpressions.MergeWhenMatchedDelete;
+import codequery.sqlexpressions.MergeWhenMatchedUpdate;
+import codequery.sqlexpressions.MergeWhenNotMatchedInsert;
+import codequery.sqlexpressions.ObjectConstSqlExpression;
 import codequery.sqlexpressions.UpdateExpression;
 import codequery.sqlexpressions.ExistsSqlExpression;
 import codequery.sqlexpressions.ISqlExpression;
@@ -117,6 +123,11 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 			return Against(insert.AllSources(), () -> InsertSql(insert));
 		}
 
+		final merge = Std.downcast(cast statement, MergeExpression);
+		if (merge != null) {
+			return Against(merge.AllSources(), () -> MergeSql(merge));
+		}
+
 		// A migration's SQL is written rather than built, and goes through as it stands.
 		final raw = Std.downcast(cast statement, codequery.migrations.RawStatement);
 		if (raw != null) {
@@ -201,7 +212,7 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 		if (insert.FromSelect != null) {
 			sql += ' ${Against(insert.FromSelect.AllSources(), () -> Statement(insert.FromSelect))}';
 		} else {
-			final rows = insert.Values.map(row -> '(${row.map(RenderExpression).join(", ")})').join(", ");
+			final rows = insert.Values.map(row -> '(${row.map(v -> InsertValue(insert, v)).join(", ")})').join(", ");
 			sql += ' VALUES $rows';
 		}
 		sql += Overriding(insert.Overriding);
@@ -226,15 +237,115 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 			case DoNothing:
 				' ON CONFLICT$on DO NOTHING';
 			case DoUpdate:
-				final set = insert.ConflictUpdates
-					.map(a -> '${a.Column.ColumnName} = ${RenderExpression(a.Value)}')
-					.join(", ");
+				// Written-out assignments where the caller gave them; otherwise the columns take the
+				// values that were offered, which is what an upsert means when nobody says otherwise.
+				final set = insert.ConflictUpdates.length > 0
+					? insert.ConflictUpdates
+						.map(a -> '${a.Column.ColumnName} = ${RenderExpression(a.Value)}')
+						.join(", ")
+					: ConflictUpdateColumns(insert).map(c -> '$c = EXCLUDED.$c').join(", ");
 				' ON CONFLICT$on DO UPDATE SET $set';
 		}
 	}
 
 	function Returning(returning:Array<ISqlExpression>):String {
 		return returning.length == 0 ? "" : ' RETURNING ${returning.map(RenderExpression).join(", ")}';
+	}
+
+	/** The columns a DO UPDATE sets: the explicit list, else every inserted column that is not a conflict column. */
+	function ConflictUpdateColumns(insert:InsertExpression):Array<String> {
+		return insert.ConflictUpdateColumns.length > 0
+			? insert.ConflictUpdateColumns
+			: insert.Columns.map(c -> c.ColumnName).filter(c -> insert.ConflictColumns.indexOf(c) < 0);
+	}
+
+	/**
+		One inserted value, as the strategy says the values reach the database: bound as a parameter,
+		or written into the statement. A row's values are data by definition — they came from the
+		entity, not from the query's text — so unlike elsewhere there is nothing here to tell apart.
+	**/
+	function InsertValue(insert:InsertExpression, value:ISqlExpression):String {
+		return switch insert.Strategy.ValueMode {
+			case Parameterized: Bound(value);
+			case Inline | BinaryCopy: Written(value);
+		}
+	}
+
+	/** Bound as a parameter, whatever it arrived as. NULL stays written: there is no value to bind. */
+	function Bound(value:ISqlExpression):String {
+		final composite = Std.downcast(cast value, ObjectConstSqlExpression);
+		if (composite != null) {
+			return ObjectRow(composite, composite.Fields.map(Bound));
+		}
+		final constant = Std.downcast(cast value, ConstSqlExpression);
+		if (constant != null && !constant.Value.match(SqlConstNull)) {
+			return OnParameter(new SqlParameterExpression(constant.Value));
+		}
+		return RenderExpression(value);
+	}
+
+	/** Written into the statement, whatever it arrived as — not even a value that came as a parameter is bound. */
+	function Written(value:ISqlExpression):String {
+		final composite = Std.downcast(cast value, ObjectConstSqlExpression);
+		if (composite != null) {
+			return ObjectRow(composite, composite.Fields.map(Written));
+		}
+		final parameter = Std.downcast(cast value, SqlParameterExpression);
+		if (parameter != null) {
+			return RenderConst(parameter.Value);
+		}
+		return RenderExpression(value);
+	}
+
+	/** A composite around its fields, already rendered: `ROW(f1, f2)::TypeName`. */
+	function ObjectRow(composite:ObjectConstSqlExpression, fields:Array<String>):String {
+		return 'ROW(${fields.join(", ")})::${composite.TypeName}';
+	}
+
+	function MergeSql(merge:MergeExpression):String {
+		var sql = 'MERGE INTO ${Source(merge.Target)} USING ${Source(merge.Source)} ON ${RenderExpression(merge.On)}';
+		for (action in merge.Actions) {
+			sql += " " + MergeActionSql(action);
+		}
+		return sql;
+	}
+
+	function MergeActionSql(action:MergeAction):String {
+		final and = action.Condition == null ? "" : ' AND ${RenderExpression(action.Condition)}';
+
+		final update = Std.downcast(action, MergeWhenMatchedUpdate);
+		if (update != null) {
+			final sets = update.Assignments.map(a -> '${a.Column} = ${RenderExpression(a.Value)}').join(", ");
+			return 'WHEN MATCHED$and THEN UPDATE SET $sets';
+		}
+
+		final delete = Std.downcast(action, MergeWhenMatchedDelete);
+		if (delete != null) {
+			return 'WHEN MATCHED$and THEN DELETE';
+		}
+
+		final insert = Std.downcast(action, MergeWhenNotMatchedInsert);
+		if (insert != null) {
+			final values = insert.Values.map(RenderExpression).join(", ");
+			return 'WHEN NOT MATCHED$and THEN INSERT (${insert.Columns.join(", ")}) VALUES ($values)';
+		}
+
+		throw 'Merge action ${Type.getClassName(Type.getClass(action))} is not supported';
+	}
+
+	/** `TRUNCATE TABLE <table>`. */
+	public function BuildTruncateSql(tableName:String, ?schema:String):String {
+		return 'TRUNCATE TABLE ${schema == null ? tableName : '$schema.$tableName'}';
+	}
+
+	/**
+		Moves the table's key generator past `highestKey`, so the next generated key does not
+		collide with one already loaded. The sequence is found from the column, which is what
+		`pg_get_serial_sequence` is for.
+	**/
+	public function BuildResyncIdentitySql(tableName:String, ?schema:String, columnName:String, highestKey:Int):String {
+		final qualified = schema == null ? tableName : '$schema.$tableName';
+		return 'SELECT setval(pg_get_serial_sequence(\'$qualified\', \'$columnName\'), $highestKey)';
 	}
 
 	function ToSelectSql(expression:SelectExpression):String {
@@ -539,6 +650,10 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 		// A window function only means anything over a window, so it always has one.
 		final over = e.Window != null ? e.Window.Name : RenderOver(e.Over);
 		return '$name(${e.Arguments.map(RenderExpression).join(", ")}) OVER $over';
+	}
+
+	public function OnObjectConst(e:ObjectConstSqlExpression):String {
+		return ObjectRow(e, e.Fields.map(RenderExpression));
 	}
 
 	public function OnOrderBy(e:OrderByExpression):String {

@@ -27,6 +27,12 @@ class InsertExpression implements ISqlStatement {
 	/** What a conflicting row is set to, where the action is to update it. */
 	public final ConflictUpdates:Array<SetAssignment> = [];
 
+	/**
+		The columns a `DoUpdate` sets to the value that was offered, where `ConflictUpdates` says
+		nothing; empty means every inserted column that is not a conflict column.
+	**/
+	public final ConflictUpdateColumns:Array<String> = [];
+
 	/** Whether the insert may write a column the database generates. */
 	public var Overriding:IdentityOverride = None;
 

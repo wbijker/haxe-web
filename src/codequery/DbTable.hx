@@ -8,6 +8,7 @@ import codequery.queries.MutationQueryImpl;
 import codequery.queries.SelectQueryImpl;
 import codequery.sqlexpressions.ExpressionConverter;
 import codequery.sqlexpressions.ColumnsBuilder;
+import codequery.sqlexpressions.InsertConverter;
 #if macro
 import haxe.macro.Context;
 import haxe.macro.Expr;
@@ -80,10 +81,30 @@ class DbTable<T> implements IQuery<T> {
 			macro new codequery.queries.InsertQueryImpl($statement), self);
 	}
 
-	/** Inserts several entities at once — one statement, a row of values each. */
-	public macro function InsertMany(self:Expr, entries:Expr):Expr {
+	/**
+		Inserts several entities at once — one statement, a row of values each. A strategy says how
+		the values reach the database, and whether the rows are checked before they are sent.
+	**/
+	public macro function InsertMany(self:Expr, entries:Expr, ?strategy:Expr):Expr {
 		final entity = ExpressionConverter.EntityOf(self);
-		return ExpressionConverter.ConvertInsertMany(self, entries, entity);
+		if (ExpressionConverter.Omitted(strategy)) {
+			return ExpressionConverter.ConvertInsertMany(self, entries, entity);
+		}
+		final statement = ExpressionConverter.ConvertInsertMany(self, macro entries, entity);
+		final planned = InsertConverter.Strategised(statement, self, macro entries, entity, strategy);
+		return macro {
+			final entries = $entries;
+			$planned;
+		};
+	}
+
+	/**
+		What a load of the rows' own keys owes the sequence afterwards: the statement that moves the
+		table's key generator past the highest of them, or null where the strategy owes it nothing.
+	**/
+	public macro function ResyncStatement(self:Expr, entries:Expr, strategy:Expr):Expr {
+		final entity = ExpressionConverter.EntityOf(self);
+		return InsertConverter.Resync(self, entries, entity, strategy);
 	}
 
 	/** `INSERT … SELECT` — the rows come from a query rather than from values. */
@@ -100,9 +121,17 @@ class DbTable<T> implements IQuery<T> {
 		column — and nothing is written, because no driver can execute; `InsertExpression` is the
 		statement that would be.
 	**/
-	public macro function Insert(self:Expr, entry:Expr):Expr {
+	public macro function Insert(self:Expr, entry:Expr, ?strategy:Expr):Expr {
 		final entity = ExpressionConverter.EntityOf(self);
-		return ExpressionConverter.ConvertInsert(self, entry, entity);
+		if (ExpressionConverter.Omitted(strategy)) {
+			return ExpressionConverter.ConvertInsert(self, entry, entity);
+		}
+		final statement = ExpressionConverter.ConvertInsert(self, macro entry, entity);
+		final planned = InsertConverter.Strategised(statement, self, macro [entry], entity, strategy);
+		return macro {
+			final entry = $entry;
+			$planned;
+		};
 	}
 
 	/**
