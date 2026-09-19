@@ -410,6 +410,10 @@ class ExpressionConverter {
 				final sign = name == "dateAdd" ? "+" : "-";
 				macro codequery.sqlexpressions.Expr.infix($v{sign}, [${arg(0)}, ${Interval(args[1], args[2])}]);
 
+			case "now": macro codequery.sqlexpressions.Expr.call("NOW", []);
+			case "utcNow": macro codequery.sqlexpressions.Expr.call("UTC_NOW", []);
+			case "today": macro codequery.sqlexpressions.Expr.call("TODAY", []);
+
 			case "abs": macro codequery.sqlexpressions.Expr.call("ABS", ${list(0)});
 			case "round": macro codequery.sqlexpressions.Expr.call("ROUND", ${list(0)});
 			case "ceil": macro codequery.sqlexpressions.Expr.call("CEIL", ${list(0)});

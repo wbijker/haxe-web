@@ -113,6 +113,15 @@ extern class Sql {
 	/** `x - INTERVAL 'n unit'`. */
 	public static function dateSubtract(value:Date, count:Int, unit:String):Date;
 
+	/** `NOW()` — the moment the statement runs. A column's default, usually. */
+	public static function now():Date;
+
+	/** The same moment in UTC, which is not the same default: a schema changing one for the other has changed. */
+	public static function utcNow():Date;
+
+	/** `CURRENT_DATE`. */
+	public static function today():Date;
+
 	/** `ABS(x)`. */
 	public static function abs<T:Float>(value:T):T;
 

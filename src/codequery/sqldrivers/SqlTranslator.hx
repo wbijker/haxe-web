@@ -123,6 +123,17 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 			return raw.Sql;
 		}
 
+		// A schema change is DDL, which no source or alias has any part in.
+		final change = Std.downcast(cast statement, codequery.sqlexpressions.SchemaChangeExpression);
+		if (change != null) {
+			return new DdlRenderer().Render(change);
+		}
+
+		final create = Std.downcast(cast statement, codequery.sqlexpressions.TableCreateExpression);
+		if (create != null) {
+			return new DdlRenderer().CreateTable(create);
+		}
+
 		throw 'Cannot render ${Type.getClassName(Type.getClass(statement))}';
 	}
 
@@ -584,34 +595,8 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 		A dialect that spells a type or an ALTER differently overrides this or `RenderType`; nothing
 		about a change itself is dialect-specific, which is why the change is data and this is not.
 	**/
-	public function ToDdl(change:codequery.migrations.SchemaChange):String {
-		return switch change {
-			case CreateTable(table):
-				final columns = table.Columns.map(ColumnDefinition).join(", ");
-				'CREATE TABLE ${table.Name} ($columns)';
-
-			case DropTable(table):
-				'DROP TABLE ${table.Name}';
-
-			case AddColumn(table, column):
-				'ALTER TABLE $table ADD COLUMN ${ColumnDefinition(column)}';
-
-			case DropColumn(table, column):
-				'ALTER TABLE $table DROP COLUMN ${column.Name}';
-
-			case AlterColumn(table, _, to):
-				'ALTER TABLE $table ALTER COLUMN ${to.Name} TYPE ${RenderType(to.Type)}';
-		}
-	}
-
-	function ColumnDefinition(column:codequery.migrations.DatabaseColumnDefinition):String {
-		var sql = '${column.Name} ${RenderType(column.Type)}';
-		if (column.PrimaryKey) {
-			sql += " PRIMARY KEY";
-		} else if (!column.Nullable) {
-			sql += " NOT NULL";
-		}
-		return sql;
+	public function ToDdl(change:codequery.sqlexpressions.SchemaChangeExpression):String {
+		return ToSql(change);
 	}
 
 	public function RenderType(type:SqlType):String {
@@ -626,6 +611,15 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 			case SqlDate: "DATE";
 			case SqlTimestamp: "TIMESTAMP";
 			case SqlUnknown: throw "A cast needs a type to cast to";
+			case SqlSmallInt: "SMALLINT";
+			case SqlReal: "REAL";
+			case SqlChar: "CHAR";
+			case SqlBinary: "BLOB";
+			case SqlDateTime: "TIMESTAMP";
+			case SqlDateTimeOffset: "TIMESTAMP WITH TIME ZONE";
+			case SqlTime: "TIME";
+			case SqlGuid: "UUID";
+			case SqlJson: "JSON";
 		}
 	}
 

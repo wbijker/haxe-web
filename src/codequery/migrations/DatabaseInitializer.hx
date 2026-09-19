@@ -3,6 +3,10 @@ package codequery.migrations;
 import codequery.execution.DatabaseConfiguration;
 import codequery.sqldrivers.ISqlDriver;
 import codequery.sqldrivers.ISqlTranslator;
+#if macro
+import haxe.macro.Context;
+import haxe.macro.Expr;
+#end
 
 /**
 	A schema, configured: what it looks like, where its migrations are kept, and what to run them
@@ -32,6 +36,59 @@ class DatabaseInitializer {
 		this.Config = config;
 	}
 
+	/**
+		Builds a declared schema: `DatabaseInitializer.Build(ShopDb, configuration)` — the C#
+		`Build<ShopDb>(configuration)` — or from an instance, `Build(new ShopDb(3), configuration)`.
+
+		Each `DbTable` member is inspected from its entity, the member's own configuration applied,
+		then `configure` for the whole schema. The result is the schema instance; `Snapshot()` and
+		`Config()` from `DbSchemaExtensions` answer with what it was built into.
+	**/
+	public static macro function Build(schema:Expr, ?config:Expr, ?configure:Expr):Expr {
+		final made = switch schema.expr {
+			case EConst(CIdent(_)) | EField(_, _, _) if (IsTypeName(schema)):
+				{expr: ENew(SchemaMembers.TypePathOf(SchemaMembers.ClassTypeOf(schema)), []), pos: schema.pos};
+			case _: schema;
+		}
+		final cls = SchemaMembers.ClassTypeOf(schema);
+		final name = cls.name;
+
+		final statements:Array<Expr> = [];
+		statements.push(macro final __db = $made);
+		statements.push(macro final __snapshot = new codequery.migrations.SchemaSnapshot($v{name}));
+		for (table in SchemaMembers.TablesOf(cls)) {
+			final entity = SchemaMembers.ClassExpr(table.row);
+			final path = SchemaMembers.PathOf(table.row);
+			statements.push(macro {
+				final __definition = codequery.inspection.SchemaInspector.FromType($entity);
+				__snapshot.Tables.push(__definition);
+				__snapshot.EntityTables.set($v{path}, __definition);
+			});
+		}
+		for (table in SchemaMembers.TablesOf(cls)) {
+			final field = table.field.name;
+			statements.push(macro __db.$field.ApplyConfiguration(__snapshot));
+		}
+		if (configure != null && !configure.expr.match(EConst(CIdent("null")))) {
+			statements.push(macro($configure : codequery.migrations.SchemaSnapshot -> Void)(__snapshot));
+		}
+		final held = config == null ? macro null : config;
+		statements.push(macro codequery.migrations.SchemaBindings.Bind(__db, __snapshot, $held));
+		statements.push(macro __db);
+		return {expr: EBlock(statements), pos: schema.pos};
+	}
+
+	#if macro
+	static function IsTypeName(e:Expr):Bool {
+		return try {
+			switch Context.typeof(e) {
+				case TType(_, _): true;
+				case _: false;
+			}
+		} catch (_:Dynamic) false;
+	}
+	#end
+
 	/** The same, taken whole from a driver that renders and runs. */
 	public static function On(schema:DatabaseSchema, migrationFolder:String, driver:ISqlDriver):DatabaseInitializer {
 		return new DatabaseInitializer(schema, migrationFolder, driver, DatabaseConfiguration.Of(driver));
@@ -43,7 +100,7 @@ class DatabaseInitializer {
 		Worked out from the snapshot beside that migration, not from the database — which is what
 		lets a migration be scaffolded with nothing to connect to.
 	**/
-	public function PendingChanges():Array<SchemaChange> {
+	public function PendingChanges():Array<codequery.sqlexpressions.SchemaChangeExpression> {
 		return SchemaDiff.Between(Store.LatestSnapshot(), Schema);
 	}
 
@@ -58,10 +115,8 @@ class DatabaseInitializer {
 		}
 
 		final up = [for (change in changes) translator.ToDdl(change) + ";"].join("\n");
-		// Undone in the reverse of the order it was done, or a table would go before its columns.
-		final undone = [for (change in changes) change];
-		undone.reverse();
-		final down = [for (change in undone) translator.ToDdl(SchemaDiff.Reverse(change)) + ";"].join("\n");
+		// What undoes it is the same difference the other way round, worked out rather than guessed.
+		final down = [for (change in SchemaDiff.Between(Schema, Store.LatestSnapshot())) translator.ToDdl(change) + ";"].join("\n");
 
 		final migration = new Migration(MigrationStore.NameFor(description == null ? "schema" : description),
 			up, down, SchemaSnapshot.ToYaml(Schema));

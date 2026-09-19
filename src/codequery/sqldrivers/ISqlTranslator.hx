@@ -20,5 +20,5 @@ interface ISqlTranslator {
 	function Placeholder(ordinal:Int):String;
 
 	/** One schema change as the DDL that makes it. */
-	function ToDdl(change:codequery.migrations.SchemaChange):String;
+	function ToDdl(change:codequery.sqlexpressions.SchemaChangeExpression):String;
 }

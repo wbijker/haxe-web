@@ -27,12 +27,42 @@ using haxe.macro.TypeTools;
 	writes this as `=> new()` and finds the name by reflecting over the entity at runtime; `of()`
 	resolves it while compiling, from the type the member is declared as.
 **/
-class DbTable<T> implements IQuery<T> {
+class DbTable<T> implements IQuery<T> implements IDbTableMember {
 	/** The table, name and schema together, as every statement over it needs both. */
 	public final Table:QualifiedTableName;
 
-	public function new(table:QualifiedTableName) {
+	/** The entity's class path, which is how a schema finds this table's definition. */
+	public var EntityName(default, null):Null<String>;
+
+	/** What the member says about its table beyond what the entity's own metadata can. */
+	final configure:Null<codequery.migrations.EntityTableBuilder<T>->Void>;
+
+	public function new(table:QualifiedTableName, ?entity:String, ?configure:codequery.migrations.EntityTableBuilder<T>->Void) {
 		this.Table = table;
+		this.EntityName = entity;
+		this.configure = configure;
+	}
+
+	/**
+		A table class that configures itself overrides this; the lambda handed to the constructor
+		runs after it, and is the later word.
+	**/
+	public function Configure(builder:codequery.migrations.EntityTableBuilder<T>):Void {}
+
+	/** Applies what the member declares to the snapshot's table for its entity. */
+	public function ApplyConfiguration(snapshot:codequery.migrations.SchemaSnapshot):Void {
+		if (EntityName == null) {
+			return;
+		}
+		final definition = snapshot.TableOf(EntityName);
+		if (definition == null) {
+			return;
+		}
+		final builder = new codequery.migrations.EntityTableBuilder<T>(definition, snapshot);
+		Configure(builder);
+		if (configure != null) {
+			configure(builder);
+		}
 	}
 
 	/** The table name, unqualified. `Table` is the one to pass on, since a name alone loses the schema. */
@@ -109,7 +139,7 @@ class DbTable<T> implements IQuery<T> {
 		Declares the table for the entity the member is typed as, taking its name from that type.
 		The C# counterpart of this is the parameterless `new()`.
 	**/
-	public static macro function of():Expr {
+	public static macro function of(?configure:Expr):Expr {
 		final expected = Context.getExpectedType();
 		if (expected == null) {
 			Context.error("DbTable.of() needs the member to declare its type, e.g. var Deliveries:DbTable<Delivery> = DbTable.of()",
@@ -122,6 +152,33 @@ class DbTable<T> implements IQuery<T> {
 		}
 
 		final name = ColumnsBuilder.TableNameOfType(entity);
-		return macro new codequery.DbTable(new codequery.QualifiedTableName($v{name}));
+		final path = TypeOf(entity);
+		final key = switch entity.follow() {
+			case TInst(t, _): t.get().pack.concat([t.get().name]).join(".");
+			case _: null;
+		}
+		final setup = configure == null || configure.expr.match(EConst(CIdent("null")))
+			? macro null
+			: macro($configure : codequery.migrations.EntityTableBuilder<$path> -> Void);
+		return macro new codequery.DbTable<$path>(new codequery.QualifiedTableName($v{name}), $v{key}, $setup);
 	}
+
+	/** The table an entity maps to, for a table class to hand its base: `super(DbTable.tableOf(Part))`. */
+	public static macro function tableOf(entity:Expr):Expr {
+		final row = codequery.migrations.SchemaMembers.ClassTypeOf(entity);
+		final name = codequery.inspection.SchemaInspector.TableNameOf(row);
+		final schema = codequery.inspection.SchemaInspector.SchemaOf(row);
+		return macro new codequery.QualifiedTableName($v{name}, $v{schema});
+	}
+
+	/** The class path an entity is known by, for a table class to hand its base. */
+	public static macro function entityOf(entity:Expr):Expr {
+		return macro $v{codequery.migrations.SchemaMembers.ClassPathOf(entity)};
+	}
+
+	#if macro
+	static function TypeOf(type:Type):ComplexType {
+		return haxe.macro.TypeTools.toComplexType(type);
+	}
+	#end
 }

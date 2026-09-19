@@ -32,7 +32,7 @@ class SqlDriver implements ISqlDriver {
 		return Translator.Placeholder(ordinal);
 	}
 
-	public function ToDdl(change:codequery.migrations.SchemaChange):String {
+	public function ToDdl(change:codequery.sqlexpressions.SchemaChangeExpression):String {
 		return Translator.ToDdl(change);
 	}
 

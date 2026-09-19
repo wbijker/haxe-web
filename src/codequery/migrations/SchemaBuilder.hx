@@ -1,7 +1,7 @@
 package codequery.migrations;
 
 #if macro
-import codequery.sqlexpressions.ColumnsBuilder;
+import codequery.inspection.SchemaInspector;
 import haxe.macro.Context;
 import haxe.macro.Expr;
 import haxe.macro.Type;
@@ -13,117 +13,23 @@ using haxe.macro.TypeTools;
 	Reads the schema off the entities, while compiling.
 
 	C# reflects over the schema class at runtime to find what it declares. Here the same walk
-	happens during compilation — the same walk `ColumnsBuilder` does for a query's columns, so a
-	column of the schema and a column of a query cannot disagree about what a table has.
+	happens during compilation: each `DbTable<T>` member's entity is inspected by `SchemaInspector`,
+	so a column of the schema and a column of a query cannot disagree about what a table has.
 **/
 class SchemaBuilder {
 	/**
-		The schema a class declares, from its `DbTable` and `DbView` members.
+		The schema a class declares, from its `DbTable` members.
 
 		A view is described but not built: it is a query given a name, and what creates one is the
 		query, not a list of columns.
 	**/
 	public static macro function Of(schema:Expr):Expr {
-		final declared = switch Context.typeof(schema).follow() {
-			case TInst(t, _): t.get();
-			case t: Context.error('${t.toString()} is not a schema class', schema.pos);
-		}
-
+		final declared = SchemaMembers.ClassTypeOf(schema);
 		final tables:Array<Expr> = [];
-		for (field in declared.fields.get()) {
-			if (!field.isPublic) {
-				continue;
-			}
-			final entity = EntityOfTable(field.type);
-			if (entity == null) {
-				continue;
-			}
-			tables.push(TableOf(entity, field.pos));
+		for (table in SchemaMembers.TablesOf(declared)) {
+			tables.push(SchemaInspector.Inspect(table.row, schema.pos));
 		}
-
 		final list = {expr: EArrayDecl(tables), pos: schema.pos};
-		return macro new codequery.migrations.DatabaseSchema($list, $v{declared.name});
+		return macro codequery.migrations.DatabaseSchema.FromTables($list, $v{declared.name});
 	}
-
-	#if macro
-	/** The row type of a `DbTable<T>`, or null for a member that is not one. */
-	static function EntityOfTable(type:Type):Null<Type> {
-		return switch type.follow() {
-			case TInst(t, [row]) if (t.get().name == "DbTable"): row;
-			case _: null;
-		}
-	}
-
-	static function TableOf(entity:Type, pos:Position):Expr {
-		final row = switch entity.follow() {
-			case TInst(t, _): t.get();
-			case t: Context.error('${t.toString()} is not an entity class', pos);
-		}
-
-		final columns:Array<Expr> = [];
-		ColumnsOf(row, [], [], columns, pos);
-
-		final list = {expr: EArrayDecl(columns), pos: pos};
-		return macro new codequery.migrations.DatabaseTableDefinition(
-			$v{ColumnsBuilder.TableNameOf(row)}, $list);
-	}
-
-	/** The same walk `ColumnsBuilder` does, so a schema and a query agree about a table. */
-	static function ColumnsOf(row:ClassType, member:Array<String>, visited:Array<String>,
-			into:Array<Expr>, pos:Position):Void {
-		for (field in row.fields.get()) {
-			if (!field.isPublic || !field.kind.match(FVar(AccNormal | AccNo, _))) {
-				continue;
-			}
-
-			final nested = switch field.type.follow() {
-				case TInst(t, _):
-					final held = t.get();
-					final path = held.pack.concat([held.name]).join(".");
-					(path == "String" || path == "Date") ? null : held;
-				case _: null;
-			}
-
-			if (nested != null) {
-				final path = nested.pack.concat([nested.name]).join(".");
-				if (visited.indexOf(path) >= 0) {
-					Context.error('${row.name}.${field.name} contains itself', pos);
-				}
-				ColumnsOf(nested, member.concat([ColumnsBuilder.ColumnNameOf(field)]),
-					visited.concat([path]), into, pos);
-				continue;
-			}
-
-			final name = member.concat([ColumnsBuilder.ColumnNameOf(field)]).join(ColumnsBuilder.Separator);
-			final type = ColumnsBuilder.SqlTypeOfField(field);
-			// A key is the one column the database fills in, and a nested member is never one.
-			final key = member.length == 0 && (field.name == "id" || field.meta.has("primaryKey"));
-			into.push(macro new codequery.migrations.DatabaseColumnDefinition(
-				$v{name}, $type, $v{IsNullable(field)}, $v{key}));
-		}
-	}
-
-	/**
-		Whether a column takes a null.
-
-		`Null<T>` says so, and so does `@columnNullable(false)` saying the opposite — C# writes that
-		attribute on a string, which is the one type whose Haxe spelling does not already say it.
-	**/
-	static function IsNullable(field:ClassField):Bool {
-		final stated = switch field.meta.extract("columnNullable") {
-			case [{params: [{expr: EConst(CIdent(v))}]}]: v == "true";
-			case _: null;
-		}
-		if (stated != null) {
-			return stated;
-		}
-		return switch field.type {
-			case TType(t, _) if (t.get().name == "Null"): true;
-			case TAbstract(t, _) if (t.get().name == "Null"): true;
-			// A string holds a null whether or not it is spelled that way.
-			case TInst(t, _) if (t.get().name == "String"): true;
-			case _: false;
-		}
-	}
-	#end
 }

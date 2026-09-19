@@ -12,4 +12,14 @@ enum SqlType {
 	SqlDate;
 	SqlTimestamp;
 	SqlUnknown;
+	// The rest of C#'s `SqlType`, which the schema needs to name a column by.
+	SqlSmallInt;
+	SqlReal;
+	SqlChar;
+	SqlBinary;
+	SqlDateTime;
+	SqlDateTimeOffset;
+	SqlTime;
+	SqlGuid;
+	SqlJson;
 }
