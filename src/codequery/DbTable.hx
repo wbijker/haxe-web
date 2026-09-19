@@ -2,7 +2,11 @@ package codequery;
 
 import codequery.queries.IQuery;
 import codequery.queries.ISelectQuery;
+import codequery.queries.IDeleteQuery;
+import codequery.queries.IUpdateQuery;
+import codequery.queries.MutationQueryImpl;
 import codequery.queries.SelectQueryImpl;
+import codequery.sqlexpressions.ExpressionConverter;
 import codequery.sqlexpressions.ColumnsBuilder;
 #if macro
 import haxe.macro.Context;
@@ -40,6 +44,29 @@ class DbTable<T> implements IQuery<T> {
 
 	public function From():ISelectQuery<T> {
 		return cast SelectQueryImpl.OverTable(Table);
+	}
+
+	/** Begins an UPDATE of this table's rows. */
+	public function Update():IUpdateQuery<T> {
+		return cast MutationQueryImpl.Updating(Table);
+	}
+
+	/** Begins a DELETE from this table. */
+	public function Delete():IDeleteQuery<T> {
+		return cast MutationQueryImpl.Deleting(Table);
+	}
+
+	/**
+		Inserts one entity.
+
+		C# reads the row's values off it by reflection and answers with the number of rows written.
+		Here the reading is done while compiling — the macro knows the entity and emits a read per
+		column — and nothing is written, because no driver can execute; `InsertExpression` is the
+		statement that would be.
+	**/
+	public macro function Insert(self:Expr, entry:Expr):Expr {
+		final entity = ExpressionConverter.EntityOf(self);
+		return ExpressionConverter.ConvertInsert(self, entry, entity);
 	}
 
 	/**

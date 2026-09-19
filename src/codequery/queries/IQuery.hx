@@ -8,4 +8,10 @@ package codequery.queries;
 interface IQuery<TTable> extends IQueryTable {
 	/** Begins a SELECT over this table: `SELECT … FROM TTable`. */
 	function From():ISelectQuery<TTable>;
+
+	/** Begins an UPDATE of this table's rows. */
+	function Update():IUpdateQuery<TTable>;
+
+	/** Begins a DELETE from this table. */
+	function Delete():IDeleteQuery<TTable>;
 }

@@ -12,20 +12,26 @@ package codequery.sqlexpressions;
 	Deliberately not `inline`: inlining these would put the constructor calls back.
 **/
 class Expr {
-	public static function constInt(value:Int):ConstSqlExpression {
-		return new ConstSqlExpression(SqlConstInt(value));
+	// Each takes a value that may be absent, so that a nullable column needs no special case
+	// wherever a row's values are read.
+	public static function constInt(value:Null<Int>):ConstSqlExpression {
+		return value == null ? constNull() : new ConstSqlExpression(SqlConstInt(value));
 	}
 
-	public static function constFloat(value:Float):ConstSqlExpression {
-		return new ConstSqlExpression(SqlConstFloat(value));
+	public static function constFloat(value:Null<Float>):ConstSqlExpression {
+		return value == null ? constNull() : new ConstSqlExpression(SqlConstFloat(value));
 	}
 
-	public static function constString(value:String):ConstSqlExpression {
-		return new ConstSqlExpression(SqlConstString(value));
+	public static function constString(value:Null<String>):ConstSqlExpression {
+		return value == null ? constNull() : new ConstSqlExpression(SqlConstString(value));
 	}
 
-	public static function constBool(value:Bool):ConstSqlExpression {
-		return new ConstSqlExpression(SqlConstBool(value));
+	public static function constBool(value:Null<Bool>):ConstSqlExpression {
+		return value == null ? constNull() : new ConstSqlExpression(SqlConstBool(value));
+	}
+
+	public static function constDate(value:Null<Date>):ConstSqlExpression {
+		return value == null ? constNull() : new ConstSqlExpression(SqlConstDate(value));
 	}
 
 	public static function constNull():ConstSqlExpression {

@@ -487,6 +487,111 @@ class ExpressionConverter {
 		}
 	}
 
+	/**
+		The column a `Set` is assigning to — a lambda naming one member of the row, and nothing else,
+		since that is the only thing SQL can assign to.
+	**/
+	public static function ConvertColumn(selector:Expr, rows:Array<Type>):Expr {
+		final converted = ConvertKey(selector, rows);
+		return macro(${converted} : codequery.sqlexpressions.ColumnSqlExpression);
+	}
+
+	/**
+		What a `Set` is assigning: a lambda is an expression over the row, and anything else is a
+		value to be read where it stands.
+	**/
+	public static function ConvertValue(value:Expr, rows:Array<Type>):Expr {
+		return switch value.expr {
+			case EFunction(_, _): ConvertKey(value, rows);
+			case _: Valued(value);
+		}
+	}
+
+	/** A runtime value, as the constant it will be by the time the statement runs. */
+	public static function Valued(value:Expr):Expr {
+		final factory = Factory(switch Context.typeof(value).follow() {
+			case TAbstract(_.get() => {name: "Int"}, _): "constInt";
+			case TAbstract(_.get() => {name: "Float"}, _): "constFloat";
+			case TAbstract(_.get() => {name: "Bool"}, _): "constBool";
+			case TInst(_.get() => {name: "String"}, _): "constString";
+			case TInst(_.get() => {name: "Date"}, _): "constDate";
+			// An enum abstract is its underlying value by the time SQL sees it.
+			case TAbstract(t, _) if (t.get().meta.has(":enum")): "constInt";
+			case t: Context.error('${t.toString()} is not something a column can hold', value.pos);
+		});
+		return macro $factory($value);
+	}
+
+	/** An update or a delete answers with a query of its own kind, over the same row. */
+	public static function AnsweringMutation(statement:Expr, self:Expr):Expr {
+		final kind = switch Context.typeof(self).follow() {
+			case TAbstract(t, rows): {name: t.get().name, rows: rows};
+			case t: Context.error('Not an update or a delete: ${t.toString()}', self.pos);
+		}
+		final queryType = TPath({
+			pack: ["codequery", "queries"],
+			name: kind.name,
+			params: [for (row in kind.rows) TPType(row.toComplexType())]
+		});
+		return macro(cast $statement : $queryType);
+	}
+
+	/**
+		An INSERT of one entity: a column and a read of the matching member, for every column the
+		row has, nested members included.
+	**/
+	public static function ConvertInsert(table:Expr, entry:Expr, entity:Type):Expr {
+		final row = switch entity.follow() {
+			case TInst(t, _): t.get();
+			case t: Context.error('${t.toString()} is not an entity class', entry.pos);
+		}
+
+		final columns:Array<Expr> = [];
+		final values:Array<Expr> = [];
+		InsertMembers(row, entry, [], [], columns, values);
+
+		final columnList = {expr: EArrayDecl(columns), pos: entry.pos};
+		final valueList = {expr: EArrayDecl(values), pos: entry.pos};
+		return macro codequery.queries.InsertStatement.Of($table, $columnList, $valueList);
+	}
+
+	static function InsertMembers(row:ClassType, entry:Expr, member:Array<String>, visited:Array<String>,
+			columns:Array<Expr>, values:Array<Expr>):Void {
+		for (field in row.fields.get()) {
+			if (!field.isPublic) {
+				continue;
+			}
+			switch field.kind {
+				case FVar(AccNormal | AccNo, _):
+				case _: continue;
+			}
+
+			final name = field.name;
+			final read = macro $entry.$name;
+			final nested = switch field.type.follow() {
+				case TInst(t, _):
+					final held = t.get();
+					final path = held.pack.concat([held.name]).join(".");
+					(path == "String" || path == "Date") ? null : held;
+				case _: null;
+			}
+
+			if (nested == null) {
+				final column = member.concat([ColumnsBuilder.ColumnNameOf(field)]).join(ColumnsBuilder.Separator);
+				columns.push(macro $v{column});
+				values.push(Valued(read));
+				continue;
+			}
+
+			final path = nested.pack.concat([nested.name]).join(".");
+			if (visited.indexOf(path) >= 0) {
+				Context.error('${row.name}.$name contains itself, so its columns have no end', entry.pos);
+			}
+			InsertMembers(nested, read, member.concat([ColumnsBuilder.ColumnNameOf(field)]),
+				visited.concat([path]), columns, values);
+		}
+	}
+
 	/** Whether an optional macro argument was left out at the call site. */
 	public static function Omitted(arg:Null<Expr>):Bool {
 		return arg == null || arg.expr.match(EConst(CIdent("null")));

@@ -77,6 +77,45 @@ class SampleProgram {
 			.Where(p -> p.description != null)
 			.OrderBy(p -> p.engPartNo)
 			.ToExpression());
+
+		mutations();
+	}
+
+	/** What Program.cs writes, as the statements that would do it. */
+	static function mutations() {
+		// Update, with a value and with an expression over the row.
+		write(db.Bookings.Update()
+			.Set(b -> b.status, BookingStatus.Cancelled)
+			.Set(b -> b.refundCents, b -> b.totalCents / 2)
+			.Where(b -> b.id == 7)
+			.ToExpression());
+
+		write(db.Bookings.Delete()
+			.Where(b -> b.status == BookingStatus.Cancelled && b.refundCents == 0)
+			.ToExpression());
+
+		// RETURNING what was touched.
+		write(db.Units.Update()
+			.Set(u -> u.cleaningFeeCents, 4500)
+			.Where(u -> u.sleeps > 4)
+			.Returning(u -> {id: u.id, fee: u.cleaningFeeCents})
+			.ToExpression());
+
+		// An insert reads the entity's members while compiling, the flattened one included.
+		final ada = new Guest(0);
+		ada.name = "Ada Lovelace";
+		write(db.Guests.Insert(ada));
+
+		final seaside = new Unit(0);
+		seaside.name = "Seaside cottage";
+		seaside.sleeps = 4;
+		seaside.baseRateCents = 12000;
+		seaside.cleaningFeeCents = 3500;
+		write(db.Units.Insert(seaside));
+	}
+
+	static function write(statement:codequery.sqlexpressions.ISqlStatement) {
+		Sys.println(driver.ToSql(statement));
 	}
 
 	static function show(statement:SelectExpression) {

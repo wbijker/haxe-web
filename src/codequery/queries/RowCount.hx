@@ -37,7 +37,12 @@ class RowCount {
 
 	/** Counting runs the query, and no driver can do that yet. */
 	public static function Unavailable():Int {
-		throw "Counting runs the query, so it needs a connection to run it against. No driver can "
-			+ "execute yet; CountExpression() gives the statement Count would run.";
+		return NeedsAConnection("Counting", "CountExpression()");
+	}
+
+	/** Running a statement needs a connection, and no driver has one. */
+	public static function NeedsAConnection(what:String, instead:String):Int {
+		throw '$what runs the statement, so it needs a connection to run it against. No driver can '
+			+ 'execute yet; $instead gives the statement it would run.';
 	}
 }

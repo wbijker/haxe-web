@@ -5,6 +5,10 @@ import codequery.sqlexpressions.AllColumnsSqlExpression;
 import codequery.sqlexpressions.BinarySqlExpression;
 import codequery.sqlexpressions.ColumnSqlExpression;
 import codequery.sqlexpressions.ConstSqlExpression;
+import codequery.sqlexpressions.DeleteExpression;
+import codequery.sqlexpressions.ISqlStatement;
+import codequery.sqlexpressions.InsertExpression;
+import codequery.sqlexpressions.UpdateExpression;
 import codequery.sqlexpressions.ExistsSqlExpression;
 import codequery.sqlexpressions.ISqlExpression;
 import codequery.sqlexpressions.ISqlSource;
@@ -33,7 +37,97 @@ class SqlDriver {
 
 	public function new() {}
 
-	public function ToSql(expression:SelectExpression):String {
+	/**
+		Renders whichever statement it is given. C# tells them apart by overloading; Haxe has no
+		overloading, so the statement says which kind it is and this asks.
+	**/
+	public function ToSql(statement:ISqlStatement):String {
+		final select = Std.downcast(cast statement, SelectExpression);
+		if (select != null) {
+			return ToSelectSql(select);
+		}
+
+		final update = Std.downcast(cast statement, UpdateExpression);
+		if (update != null) {
+			return Against(update.AllSources(), () -> UpdateSql(update));
+		}
+
+		final delete = Std.downcast(cast statement, DeleteExpression);
+		if (delete != null) {
+			return Against(delete.AllSources(), () -> DeleteSql(delete));
+		}
+
+		final insert = Std.downcast(cast statement, InsertExpression);
+		if (insert != null) {
+			return Against(insert.AllSources(), () -> InsertSql(insert));
+		}
+
+		throw 'Cannot render ${Type.getClassName(Type.getClass(statement))}';
+	}
+
+	/** Each statement renders against its own sources; whatever was in scope is restored after. */
+	function Against(statementSources:Array<ISqlSource>, render:Void->String):String {
+		final outer = sources;
+		sources = statementSources;
+		final sql = render();
+		sources = outer;
+		return sql;
+	}
+
+	function UpdateSql(update:UpdateExpression):String {
+		if (update.Assignments.length == 0) {
+			throw "An update sets something";
+		}
+
+		// The columns being assigned are the target's own, so they are named without its alias.
+		final assignments = update.Assignments
+			.map(a -> '${a.Column.ColumnName} = ${RenderExpression(a.Value)}')
+			.join(", ");
+
+		var sql = 'UPDATE ${Source(update.Target)} SET $assignments';
+		if (update.FromSources.length > 0) {
+			sql += ' FROM ${update.FromSources.map(Source).join(", ")}';
+		}
+		if (update.Where != null) {
+			sql += ' WHERE ${RenderExpression(update.Where)}';
+		}
+		return sql + Returning(update.Returning);
+	}
+
+	function DeleteSql(delete:DeleteExpression):String {
+		var sql = 'DELETE FROM ${Source(delete.Target)}';
+		if (delete.FromSources.length > 0) {
+			sql += ' USING ${delete.FromSources.map(Source).join(", ")}';
+		}
+		if (delete.Where != null) {
+			sql += ' WHERE ${RenderExpression(delete.Where)}';
+		}
+		return sql + Returning(delete.Returning);
+	}
+
+	function InsertSql(insert:InsertExpression):String {
+		final target = Std.downcast(cast insert.Target, TableSqlSource);
+		if (target == null) {
+			throw "Rows are inserted into a table";
+		}
+
+		final columns = insert.Columns.map(column -> column.ColumnName).join(", ");
+		var sql = 'INSERT INTO ${target.Table} ($columns)';
+
+		if (insert.FromSelect != null) {
+			sql += ' ${ToSql(insert.FromSelect)}';
+		} else {
+			final rows = insert.Values.map(row -> '(${row.map(RenderExpression).join(", ")})').join(", ");
+			sql += ' VALUES $rows';
+		}
+		return sql + Returning(insert.Returning);
+	}
+
+	function Returning(returning:Array<ISqlExpression>):String {
+		return returning.length == 0 ? "" : ' RETURNING ${returning.map(RenderExpression).join(", ")}';
+	}
+
+	function ToSelectSql(expression:SelectExpression):String {
 		// Each statement renders against its own sources; a subquery restores the outer ones after.
 		final outer = sources;
 		sources = expression.AllSources();
@@ -314,6 +408,7 @@ class SqlDriver {
 			case SqlConstInt(v): Std.string(v);
 			case SqlConstFloat(v): Std.string(v);
 			case SqlConstString(v): "'" + StringTools.replace(v, "'", "''") + "'";
+			case SqlConstDate(v): "'" + DateTools.format(v, "%Y-%m-%d %H:%M:%S") + "'";
 			case SqlConstNull: "NULL";
 		}
 	}

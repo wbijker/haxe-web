@@ -5,16 +5,16 @@ class Booking {
 	public var id:Int;
 
 	@columnForeignKey("sample.Unit")
-	public var unitId:Int;
+	public var unitId:Int = 0;
 
 	@columnForeignKey("sample.Guest")
-	public var guestId:Int;
+	public var guestId:Int = 0;
 
 	public var checkIn:Date;
 	public var checkOut:Date;
 	public var status:BookingStatus;
-	public var totalCents:Int;
-	public var refundCents:Int;
+	public var totalCents:Int = 0;
+	public var refundCents:Int = 0;
 
 	/** Flattened into this row's columns rather than a table of its own. */
 	@columnObject("Flatten")

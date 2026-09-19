@@ -9,5 +9,6 @@ enum SqlConstValue {
 	SqlConstInt(value:Int);
 	SqlConstFloat(value:Float);
 	SqlConstString(value:String);
+	SqlConstDate(value:Date);
 	SqlConstNull;
 }

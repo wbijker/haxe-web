@@ -6,7 +6,7 @@ package codequery.sqlexpressions;
 	Projection and grouping are still to come; what a select can say — its sources, its WHERE,
 	whether it is distinct, its ordering and how many rows it wants — is here.
 **/
-class SelectExpression {
+class SelectExpression implements ISqlStatement {
 	public final Source:ISqlSource;
 
 	public final Joins:Array<JoinSqlExpression> = [];
