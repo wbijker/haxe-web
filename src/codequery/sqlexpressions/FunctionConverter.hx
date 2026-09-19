@@ -121,6 +121,13 @@ class FunctionConverter {
 			return macro codequery.sqlexpressions.Expr.interval($e);
 		}
 
+		// A method on something that reads no row is a value the lambda closed over — worked out
+		// where the query is built and sent beside it, as C# evaluates a closure — not a function
+		// for the database to run.
+		if (!MentionsRow(e, bound)) {
+			return null;
+		}
+
 		return switch Strip(callee).expr {
 			case EField(owner, method, _): Member(owner, method, args, bound, rows, pos);
 			case _: null;

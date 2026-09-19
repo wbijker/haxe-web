@@ -52,6 +52,11 @@ class MutationQueryExtensions {
 		return ExpressionConverter.AnsweringMutation(macro ${Impl(self)}.ReturningProjection($selection), self);
 	}
 
+	/** A clause only sometimes wanted, said in the chain: `.Conditional(onlyOpen, q -> q.Where(…))`. */
+	public static macro function Conditional(self:Expr, condition:Expr, then:Expr, ?otherwise:Expr):Expr {
+		return codequery.sqlexpressions.LambdaCalls.Conditional(self, condition, then, otherwise);
+	}
+
 	#if macro
 	static function Impl(self:Expr):Expr {
 		return macro(cast $self : codequery.queries.MutationQueryImpl);

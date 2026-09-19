@@ -163,6 +163,10 @@ class ProjectionResolver implements ISqlExpressionVisitor<ISqlExpression> {
 		return new SqlCommentExpression(Visit(e.Value), e.Text);
 	}
 
+	public function OnRow(e:RowSqlExpression):ISqlExpression {
+		return new RowSqlExpression(Each(e.Values));
+	}
+
 	public function OnOrderBy(e:OrderByExpression):ISqlExpression {
 		return new OrderByExpression(Visit(e.Expression), e.Ascending, e.Nulls);
 	}

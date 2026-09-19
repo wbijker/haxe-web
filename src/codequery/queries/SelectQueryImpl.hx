@@ -367,7 +367,7 @@ class SelectQueryImpl {
 		projected.Selection = context.Resolve(selection);
 
 		final context = new SourceContext();
-		return new SelectQueryImpl(new SelectExpression(context.AddQuerySource(projected)), context);
+		return new SelectQueryImpl(new SelectExpression(context.AddQuerySource(projected, true)), context);
 	}
 
 	public function JoinTable(type:JoinType, table:IQueryTable, ?on:ISqlExpression):SelectQueryImpl {

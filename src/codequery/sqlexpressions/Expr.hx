@@ -65,6 +65,79 @@ class Expr {
 		return new CaseSqlExpression(branches, otherwise);
 	}
 
+	/** `CASE <operand> WHEN <value> THEN …` — one operand compared against each arm's value. */
+	public static function simpleCase(operand:ISqlExpression, branches:Array<CaseBranch>,
+			?otherwise:ISqlExpression):CaseSqlExpression {
+		return new CaseSqlExpression(branches, otherwise, operand);
+	}
+
+	public static function exists(subquery:SelectExpression, negate:Bool = false):ExistsSqlExpression {
+		return new ExistsSqlExpression(subquery, negate);
+	}
+
+	/** `s.contains(term)`, `s.startsWith(term)`, `s.endsWith(term)` — a LIKE the translator adds the wildcards to. */
+	public static function stringOp(type:StringOperationType, operand:ISqlExpression,
+			pattern:ISqlExpression):StringOperationExpression {
+		return new StringOperationExpression(operand, type, pattern);
+	}
+
+	/** `(a, b, …)` — several values as one row. */
+	public static function row(values:Array<ISqlExpression>):RowSqlExpression {
+		return new RowSqlExpression(values);
+	}
+
+	/**
+		`a AND b` where a side may be decided already — a captured flag, a guard on a captured list.
+		A decided side folds away, and the other is only built where it is needed: `false && x` never
+		looks at `x`, which is what lets a guard stand in front of something that could not be built
+		on its own.
+	**/
+	public static function andAlso(left:ISqlExpression, right:Void->ISqlExpression):ISqlExpression {
+		final decided = Decided(left);
+		if (decided != null) {
+			return decided ? right() : constBool(false);
+		}
+		final other = right();
+		final otherDecided = Decided(other);
+		if (otherDecided != null) {
+			return otherDecided ? left : constBool(false);
+		}
+		return and(left, other);
+	}
+
+	/** `a OR b`, with a decided side folded away as `andAlso` does: `true || x` never looks at `x`. */
+	public static function orElse(left:ISqlExpression, right:Void->ISqlExpression):ISqlExpression {
+		final decided = Decided(left);
+		if (decided != null) {
+			return decided ? constBool(true) : right();
+		}
+		final other = right();
+		final otherDecided = Decided(other);
+		if (otherDecided != null) {
+			return otherDecided ? constBool(true) : left;
+		}
+		return or(left, other);
+	}
+
+	/** What a side already says, where it is a boolean the query holds — written in, or bound. */
+	static function Decided(e:ISqlExpression):Null<Bool> {
+		final constant = Std.downcast(cast e, ConstSqlExpression);
+		if (constant != null) {
+			return switch constant.Value {
+				case SqlConstBool(v): v;
+				case _: null;
+			}
+		}
+		final parameter = Std.downcast(cast e, SqlParameterExpression);
+		if (parameter != null) {
+			return switch parameter.Value {
+				case SqlConstBool(v): v;
+				case _: null;
+			}
+		}
+		return null;
+	}
+
 	public static function branch(when:ISqlExpression, then:ISqlExpression):CaseBranch {
 		return new CaseBranch(when, then);
 	}

@@ -49,8 +49,8 @@ class SourceContext {
 	}
 
 	/** Registers a subquery under an alias of its own. */
-	public function AddQuerySource(query:SelectExpression):QuerySqlSource {
-		final source = new QuerySqlSource(query, GenerateAlias());
+	public function AddQuerySource(query:SelectExpression, projected:Bool = false):QuerySqlSource {
+		final source = new QuerySqlSource(query, GenerateAlias(), projected);
 		Sources.push(source);
 		return source;
 	}
