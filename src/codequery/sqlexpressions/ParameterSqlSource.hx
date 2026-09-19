@@ -14,7 +14,13 @@ package codequery.sqlexpressions;
 	statement the column sits in, one is the statement enclosing that, and so on outwards.
 **/
 class ParameterSqlSource implements ISqlSource {
-	static final cached:Map<String, ParameterSqlSource> = new Map();
+	/**
+		Built on first use, not during static initialisation.
+
+		Haxe runs static initialisers in the order it generated the types, and a schema declaring a
+		view reaches this while its own are still running — which would read the map as null.
+	**/
+	static var cached:Null<Map<String, ParameterSqlSource>>;
 
 	public final Index:Int;
 
@@ -32,8 +38,11 @@ class ParameterSqlSource implements ISqlSource {
 
 	/** The source for parameter `index`, `scope` statements out — one instance per pairing. */
 	public static function At(index:Int, scope:Int = 0):ParameterSqlSource {
+		if (cached == null) {
+			cached = new Map();
+		}
 		final key = '$scope:$index';
-        final known = cached.get(key);
+		final known = cached.get(key);
 		if (known != null) {
 			return known;
 		}

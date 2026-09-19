@@ -1,5 +1,6 @@
 package codequery.queries;
 
+import codequery.execution.DatabaseConfiguration;
 import codequery.sqlexpressions.BinarySqlExpression;
 import codequery.sqlexpressions.ColumnSqlExpression;
 import codequery.sqlexpressions.DeleteExpression;

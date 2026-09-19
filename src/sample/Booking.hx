@@ -23,4 +23,14 @@ class Booking {
 	public function new(id:Int) {
 		this.id = id;
 	}
+
+	/** The join a booking is always made to its unit by, declared once rather than at each use. */
+	public static function withUnit() {
+		return (b:Booking, u:Unit) -> u.id == b.unitId;
+	}
+
+	/** The same, for its guest. */
+	public static function withGuest() {
+		return (b:Booking, g:Guest) -> g.id == b.guestId;
+	}
 }

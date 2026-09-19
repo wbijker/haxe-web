@@ -192,7 +192,33 @@ class SqlDriver implements ISqlExpressionVisitor<String> {
 			final rows = insert.Values.map(row -> '(${row.map(RenderExpression).join(", ")})').join(", ");
 			sql += ' VALUES $rows';
 		}
+		sql += Overriding(insert.Overriding);
+		sql += Conflict(insert);
 		return sql + Returning(insert.Returning);
+	}
+
+	function Overriding(mode:codequery.sqlexpressions.IdentityOverride):String {
+		return switch mode {
+			case None: "";
+			case SystemValue: " OVERRIDING SYSTEM VALUE";
+			case UserValue: " OVERRIDING USER VALUE";
+		}
+	}
+
+	function Conflict(insert:InsertExpression):String {
+		if (insert.OnConflict == null) {
+			return "";
+		}
+		final on = insert.ConflictColumns.length == 0 ? "" : ' (${insert.ConflictColumns.join(", ")})';
+		return switch insert.OnConflict {
+			case DoNothing:
+				' ON CONFLICT$on DO NOTHING';
+			case DoUpdate:
+				final set = insert.ConflictUpdates
+					.map(a -> '${a.Column.ColumnName} = ${RenderExpression(a.Value)}')
+					.join(", ");
+				' ON CONFLICT$on DO UPDATE SET $set';
+		}
 	}
 
 	function Returning(returning:Array<ISqlExpression>):String {

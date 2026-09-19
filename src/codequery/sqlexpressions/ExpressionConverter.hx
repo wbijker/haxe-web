@@ -43,7 +43,8 @@ class ExpressionConverter {
 		return ConvertLambda(selector, rows, macro :Dynamic, "a key selector, e.g. a -> a.id");
 	}
 
-	static function ConvertLambda(lambda:Expr, rows:Array<Type>, returns:ComplexType, expected:String):Expr {
+	static function ConvertLambda(given:Expr, rows:Array<Type>, returns:ComplexType, expected:String):Expr {
+		final lambda = ResolveLambda(given);
 		TypeLambda(lambda, rows, returns);
 
 		final fn = switch lambda.expr {
@@ -73,6 +74,45 @@ class ExpressionConverter {
 	static function TypeLambda(lambda:Expr, rows:Array<Type>, returns:ComplexType):Void {
 		final signature = ComplexType.TFunction([for (row in rows) row.toComplexType()], returns);
 		Context.typeExpr(macro @:pos(lambda.pos) ($lambda : $signature));
+	}
+
+	/**
+		The lambda an argument stands for.
+
+		Usually it is written where it is used. It may instead name a function that answers with one
+		— which is how an entity declares a join it is always made by, as C#'s `Booking.WithUnit`
+		does: the function is read back and its lambda used as if it had been written out.
+	**/
+	static function ResolveLambda(e:Expr):Expr {
+		final e = Unwrap(e);
+		if (e.expr.match(EFunction(_, _))) {
+			return e;
+		}
+
+		final declared = try Context.typeExpr(e) catch (_:Dynamic) return e;
+		final field = switch declared.expr {
+			case TField(_, FStatic(_, cf)): cf.get();
+			case _: return e;
+		}
+
+		final body = field.expr();
+		if (body == null) {
+			return e;
+		}
+		// The function answers with the lambda, so what is wanted is what it returns.
+		return switch Unwrap(Context.getTypedExpr(body)).expr {
+			case EFunction(_, {expr: answered}): Returned(Unwrap(answered));
+			case _: e;
+		}
+	}
+
+	/** The expression a body answers with. */
+	static function Returned(e:Expr):Expr {
+		return switch e.expr {
+			case EReturn(inner) if (inner != null): Unwrap(inner);
+			case EBlock(exprs) if (exprs.length > 0): Returned(Unwrap(exprs[exprs.length - 1]));
+			case _: e;
+		}
 	}
 
 	/** Strip the syntax that carries no meaning for the conversion. */
@@ -402,7 +442,12 @@ class ExpressionConverter {
 
 	/** The same value as `Valued`, but sent beside the statement rather than written into it. */
 	static function Parameterised(value:Expr):Expr {
-		final factory = Factory(switch Context.typeof(value).followWithAbstracts() {
+		return ParameterisedAs(value, Context.typeof(value));
+	}
+
+	/** The same, where the type is known and the expression cannot be typed on its own. */
+	public static function ParameterisedAs(value:Expr, type:Type):Expr {
+		final factory = Factory(switch type.followWithAbstracts() {
 			case TAbstract(_.get() => {name: "Int"}, _): "paramInt";
 			case TAbstract(_.get() => {name: "Float"}, _): "paramFloat";
 			case TAbstract(_.get() => {name: "Bool"}, _): "paramBool";
@@ -854,6 +899,23 @@ class ExpressionConverter {
 		return macro $factory($value);
 	}
 
+	/** The column names a conflict is judged on — one lambda, or a structure naming several. */
+	public static function ConvertColumnNames(columns:Expr, rows:Array<Type>):Expr {
+		final keys = ConvertKeySet(columns, rows);
+		return macro codequery.sqlexpressions.ProjectionKeys.NamesOf($keys);
+	}
+
+	/** An insert answers with an insert, over the same row. */
+	public static function AnsweringInsert(statement:Expr, self:Expr):Expr {
+		final rows = EntitiesOf(self);
+		final queryType = TPath({
+			pack: ["codequery", "queries"],
+			name: "IInsertQuery",
+			params: [TPType(rows[0].toComplexType())]
+		});
+		return macro(cast $statement : $queryType);
+	}
+
 	/** An update or a delete answers with a query of its own kind, over the same row. */
 	public static function AnsweringMutation(statement:Expr, self:Expr):Expr {
 		final kind = switch Context.typeof(self).follow() {
@@ -960,7 +1022,9 @@ class ExpressionConverter {
 			if (nested == null) {
 				final column = member.concat([ColumnsBuilder.ColumnNameOf(field)]).join(ColumnsBuilder.Separator);
 				columns.push(macro $v{column});
-				values.push(ValuedAs(read, field.type));
+				// Sent beside the statement rather than written into it, which is the
+				// strategy's default and the safer one.
+				values.push(ParameterisedAs(read, field.type));
 				continue;
 			}
 

@@ -3,8 +3,8 @@ package codequery.sqlexpressions;
 /**
 	An INSERT statement as data — rows of values, or the rows another statement selects.
 
-	The C# original also carries an insert strategy and what to do on a conflict; neither is here
-	yet.
+	Where a row is already there, `OnConflict` says what to do about it — nothing, or set some of
+	its columns to something.
 **/
 class InsertExpression implements ISqlStatement {
 	public final Target:ISqlSource;
@@ -17,6 +17,21 @@ class InsertExpression implements ISqlStatement {
 	public var FromSelect:Null<SelectExpression>;
 
 	public final Returning:Array<ISqlExpression> = [];
+
+	/** What to do about a row that is already there, or null to let the insert fail. */
+	public var OnConflict:Null<ConflictAction>;
+
+	/** The columns a conflict is judged on. */
+	public final ConflictColumns:Array<String> = [];
+
+	/** What a conflicting row is set to, where the action is to update it. */
+	public final ConflictUpdates:Array<SetAssignment> = [];
+
+	/** Whether the insert may write a column the database generates. */
+	public var Overriding:IdentityOverride = None;
+
+	/** How the values reach the database. */
+	public var Strategy:codequery.InsertStrategy = new codequery.InsertStrategy();
 
 	public function new(target:ISqlSource) {
 		this.Target = target;

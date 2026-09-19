@@ -51,11 +51,13 @@ types against this port. Worked in batches of ten, top down.
 - [x] 38. `DELETE … USING <source>`
 - [x] 39. Multi-row `INSERT`
 - [x] 40. `INSERT … SELECT`
-- [ ] 41. Upsert — `ON CONFLICT`
-- [ ] 42. Joins declared on an entity
-- [ ] 43. `DbView`
-- [ ] 44. Insert strategy and identity override
+- [x] 41. Upsert — `ON CONFLICT`
+- [x] 42. Joins declared on an entity
+- [x] 43. `DbView`
+- [x] 44. Insert strategy and identity override
 
 ## Execution
 
-- [ ] 45. A driver that runs what it renders
+- [~] 45. A driver that runs what it renders — the seam is there (`IDatabaseExecutor`,
+  `DatabaseConfiguration`, `Statement`), and nothing implements it: that takes a connection and a
+  wire protocol, which is a driver's job and needs a database to work against.

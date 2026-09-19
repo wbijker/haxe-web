@@ -40,9 +40,14 @@ class RowCount {
 		return NeedsAConnection("Counting", "CountExpression()");
 	}
 
-	/** Running a statement needs a connection, and no driver has one. */
+	/**
+		Running a statement needs a connection, and a query is built without one.
+
+		`DatabaseConfiguration` is where one would come from; nothing implements the executor it
+		wants, because that takes a wire protocol and is a driver's job.
+	**/
 	public static function NeedsAConnection(what:String, instead:String):Int {
-		throw '$what runs the statement, so it needs a connection to run it against. No driver can '
-			+ 'execute yet; $instead gives the statement it would run.';
+		throw '$what runs the statement, so it needs a connection to run it against. Nothing '
+			+ 'implements IDatabaseExecutor yet; $instead gives the statement it would run.';
 	}
 }

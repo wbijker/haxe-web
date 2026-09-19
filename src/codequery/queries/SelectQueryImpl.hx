@@ -1,5 +1,6 @@
 package codequery.queries;
 
+import codequery.execution.DatabaseConfiguration;
 import codequery.sqlexpressions.BinarySqlExpression;
 import codequery.sqlexpressions.ISqlExpression;
 import codequery.sqlexpressions.ISqlSource;

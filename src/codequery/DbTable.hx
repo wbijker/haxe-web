@@ -69,6 +69,17 @@ class DbTable<T> implements IQuery<T> {
 		return ExpressionConverter.MutationFrom(self, source, "DeletingUsing", "IDeleteQuery2");
 	}
 
+	/**
+		Begins an insert that has more to say than its rows — what to do where a row is already
+		there, what to hand back. C#'s `Upsert`.
+	**/
+	public macro function Upsert(self:Expr, entry:Expr):Expr {
+		final entity = ExpressionConverter.EntityOf(self);
+		final statement = ExpressionConverter.ConvertInsert(self, entry, entity);
+		return ExpressionConverter.AnsweringInsert(
+			macro new codequery.queries.InsertQueryImpl($statement), self);
+	}
+
 	/** Inserts several entities at once — one statement, a row of values each. */
 	public macro function InsertMany(self:Expr, entries:Expr):Expr {
 		final entity = ExpressionConverter.EntityOf(self);
