@@ -1,0 +1,11 @@
+package codequery.queries;
+
+/**
+	The entry point for querying and mutating a single table of `TTable` entities.
+
+	Only `From` so far; `Update`, `Delete` and `Insert` follow.
+**/
+interface IQuery<TTable> {
+	/** Begins a SELECT over this table: `SELECT … FROM TTable`. */
+	function From():ISelectQuery<TTable>;
+}

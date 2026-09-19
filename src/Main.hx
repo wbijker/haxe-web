@@ -1,23 +1,13 @@
-import sql.Query;
+import codequery.sqldrivers.SqlDriver;
 
 class Main {
 	static function main() {
-		// Each of these is translated during compilation: what survives into the
-		// generated code is the string on the right, nothing else.
-		log("d -> d.id > 10", Query.where(d -> d.id > 10));
-		log("d -> d.noteNo == \"DN-0001\"", Query.where(d -> d.noteNo == "DN-0001"));
-		log("d -> d.id > 10 && d.noteNo != \"\"", Query.where(d -> d.id > 10 && d.noteNo != ""));
+		final db = new SampleDb();
+		final driver = new SqlDriver();
 
-		// Parentheses appear only where precedence actually needs them.
-		log("d -> (d.id < 5 || d.id > 100) && d.toStoreId == 3", Query.where(d -> (d.id < 5 || d.id > 100) && d.toStoreId == 3));
-
-		Sys.println("");
-		Sys.println('SELECT * FROM Delivery d WHERE ${Query.where(d -> d.id > 10)}');
-
-		Query.where(e -> e.id == 10);
-	}
-
-	static function log(predicate:String, sql:String) {
-		Sys.println('$predicate\n  -> $sql');
+		// The line this step is for. The predicate never becomes a closure: it is converted to a
+		// SQL expression tree while compiling.
+		final query = db.Deliveries.From().Where(a -> a.id == 12);
+		Sys.println(driver.ToSql(query.ToExpression()));
 	}
 }

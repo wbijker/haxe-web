@@ -1,5 +1,6 @@
 package model;
 
+@tableName("delivery")
 class Delivery {
 	public var id:Int;
 	public var fromStoreId:Null<Int>;
