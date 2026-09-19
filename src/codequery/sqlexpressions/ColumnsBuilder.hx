@@ -136,16 +136,25 @@ class ColumnsBuilder {
 			case _: null;
 		}
 
+		// `@dbColumnPrecision(p, s)` makes a number a DECIMAL, which is what fixes its size.
+		final precision = switch field.meta.extract("dbColumnPrecision") {
+			case [{params: [{expr: EConst(CInt(p, _))}, {expr: EConst(CInt(s, _))}]}]: {p: Std.parseInt(p), s: Std.parseInt(s)};
+			case _: null;
+		}
+
 		// Unwrapped first, so an enum abstract is its underlying number and SqlDate is a date.
 		final name = switch field.type.followWithAbstracts() {
 			case TAbstract(_.get() => {name: "Int"}, _): "SqlInt";
-			case TAbstract(_.get() => {name: "Float"}, _): "SqlFloat";
+			case TAbstract(_.get() => {name: "Float"}, _): precision == null ? "SqlFloat" : "SqlDecimal";
 			case TAbstract(_.get() => {name: "Bool"}, _): "SqlBool";
 			case TInst(_.get() => {name: "Date"}, _): "SqlTimestamp";
 			case TInst(_.get() => {name: "String"}, _): bounded == null ? "SqlText" : "SqlVarChar";
 			case _: "SqlUnknown";
 		}
 
+		if (name == "SqlDecimal") {
+			return macro codequery.sqlexpressions.SqlType.SqlDecimal($v{precision.p}, $v{precision.s});
+		}
 		return name == "SqlVarChar"
 			? macro codequery.sqlexpressions.SqlType.SqlVarChar($v{bounded})
 			: macro $p{["codequery", "sqlexpressions", "SqlType", name]};

@@ -68,6 +68,9 @@ class SqlExpressionWalker {
 		final ordering = Std.downcast(cast e, OrderByExpression);
 		if (ordering != null) return visitor.OnOrderBy(ordering);
 
+		final composite = Std.downcast(cast e, ObjectConstSqlExpression);
+		if (composite != null) return visitor.OnObjectConst(composite);
+
 		throw 'No visitor case for ${Type.getClassName(Type.getClass(e))}';
 	}
 }

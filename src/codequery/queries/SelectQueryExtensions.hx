@@ -290,6 +290,15 @@ class SelectQueryExtensions {
 		return ExpressionConverter.Join(self, source, null, "Cross");
 	}
 
+	/**
+		`DELETE FROM <target> USING (<this query>) WHERE <on>` — the rows this query finds are what
+		is deleted from the named table. C#'s `Delete<TTarget>(on)`; the condition names the target's
+		row first and this query's second.
+	**/
+	public static macro function Delete(self:Expr, target:Expr, condition:Expr):Expr {
+		return codequery.queries.MutationFromQuery.Delete(self, target, condition);
+	}
+
 	#if macro
 	static function Ordered(self:Expr, keySelector:Expr, nulls:Null<Expr>, ascending:Bool):Expr {
 		final rows = ExpressionConverter.EntitiesOf(self);
