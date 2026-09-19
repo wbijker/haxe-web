@@ -17,6 +17,7 @@ import codequery.sqlexpressions.NullsOrdering;
 import codequery.sqlexpressions.OrderByExpression;
 import codequery.sqlexpressions.QuerySqlSource;
 import codequery.sqlexpressions.SelectExpression;
+import codequery.sqlexpressions.QuerySqlSource;
 import codequery.sqlexpressions.SourceContext;
 import codequery.sqlexpressions.SqlBinaryOperator;
 

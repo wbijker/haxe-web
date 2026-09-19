@@ -31,4 +31,8 @@ interface ISqlExpressionVisitor<T> {
 	function OnOrderBy(e:OrderByExpression):T;
 	function OnObjectConst(e:ObjectConstSqlExpression):T;
 	function OnDistinct(e:DistinctSqlExpression):T;
+	function OnStringOperation(e:StringOperationExpression):T;
+	function OnDateOperation(e:DateOperationSqlExpression):T;
+	function OnDateFormat(e:DateFormatSqlExpression):T;
+	function OnInterval(e:IntervalSqlExpression):T;
 }
