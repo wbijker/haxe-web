@@ -40,11 +40,27 @@ class DbView<T> implements IQueryTable {
 		return cast SelectQueryImpl.OverTable(Table);
 	}
 
+	/** The view's name, unqualified. */
+	public var ViewName(get, never):String;
+
+	function get_ViewName():String {
+		return Table.Name;
+	}
+
+	/** The query the view is defined by, or what to do about there being none. */
+	public function Defined():SelectExpression {
+		if (Definition == null) {
+			throw 'The view ${Table.Name} has no definition. Give it one where it is declared — '
+				+ 'DbView.of(query) — or pass the query to its constructor.';
+		}
+		return Definition;
+	}
+
 	/**
-		Declares the view for the row type the member is typed as, taking its name from that type,
-		and defined by `query`.
+		Declares the view for the row type the member is typed as, defined by `query` — named for
+		that type, or as `name` says.
 	**/
-	public static macro function of(query:Expr):Expr {
+	public static macro function of(query:Expr, ?name:Expr):Expr {
 		final expected = Context.getExpectedType();
 		if (expected == null) {
 			Context.error("DbView.of() needs the member to declare its type, e.g. var Gaps:DbView<AvailabilityGap> = DbView.of(…)",
@@ -56,8 +72,10 @@ class DbView<T> implements IQueryTable {
 			case t: Context.error('DbView.of() expected a DbView<T>, got ${t.toString()}', Context.currentPos());
 		}
 
-		final name = codequery.sqlexpressions.ColumnsBuilder.TableNameOfType(row);
+		final named = name != null && !name.expr.match(EConst(CIdent("null")))
+			? name
+			: macro $v{codequery.sqlexpressions.ColumnsBuilder.TableNameOfType(row)};
 		final definition = macro(cast $query : codequery.queries.SelectQueryImpl).ToExpression();
-		return macro new codequery.DbView(new codequery.QualifiedTableName($v{name}), $definition);
+		return macro new codequery.DbView(new codequery.QualifiedTableName($named), $definition);
 	}
 }

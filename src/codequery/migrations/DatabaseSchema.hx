@@ -9,10 +9,24 @@ class DatabaseSchema {
 	public final Name:Null<String>;
 	public final Tables:Array<DatabaseTableDefinition>;
 
-	public function new(tables:Array<DatabaseTableDefinition>, ?name:String, version:Int = 1) {
+	/** The views the schema declares — C#'s view routines. */
+	public final Views:Array<DatabaseViewDefinition>;
+
+	public function new(tables:Array<DatabaseTableDefinition>, ?name:String, version:Int = 1,
+			?views:Array<DatabaseViewDefinition>) {
 		this.Tables = tables;
 		this.Name = name;
 		this.Version = version;
+		this.Views = views == null ? [] : views;
+	}
+
+	public function View(name:String):Null<DatabaseViewDefinition> {
+		for (view in Views) {
+			if (view.Name == name) {
+				return view;
+			}
+		}
+		return null;
 	}
 
 	public function Table(name:String):Null<DatabaseTableDefinition> {

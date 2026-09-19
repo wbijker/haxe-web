@@ -28,6 +28,15 @@ class SchemaSnapshot {
 								}
 						]
 					}
+			],
+			views: [
+				for (view in schema.Views)
+					{
+						name: view.Name,
+						select: view.Select,
+						materialized: view.Materialized,
+						strategy: Std.string(view.Strategy)
+					}
 			]
 		});
 	}
@@ -55,8 +64,18 @@ class SchemaSnapshot {
 			}
 		}
 
+		final views:Array<DatabaseViewDefinition> = [];
+		final declaredViews:Array<Dynamic> = Reflect.field(document, "views");
+		if (declaredViews != null) {
+			for (view in declaredViews) {
+				views.push(new DatabaseViewDefinition(Reflect.field(view, "name"), Reflect.field(view, "select"),
+					Reflect.field(view, "materialized") == true,
+					DatabaseViewDefinition.StrategyNamed(Reflect.field(view, "strategy"))));
+			}
+		}
+
 		return new DatabaseSchema(tables, Reflect.field(document, "name"),
-			Reflect.field(document, "version") == null ? 1 : Reflect.field(document, "version"));
+			Reflect.field(document, "version") == null ? 1 : Reflect.field(document, "version"), views);
 	}
 
 	/** A type as the snapshot writes it — its own spelling, not any dialect's. */

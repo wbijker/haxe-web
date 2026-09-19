@@ -12,10 +12,10 @@ package codequery;
 **/
 extern class Sql {
 	/** `x IN (…)`. */
-	public static function isIn<T>(value:T, values:Array<T>):Bool;
+	public static function isIn<T>(value:T, values:Iterable<T>):Bool;
 
 	/** `x NOT IN (…)`. */
-	public static function notIn<T>(value:T, values:Array<T>):Bool;
+	public static function notIn<T>(value:T, values:Iterable<T>):Bool;
 
 	/** `x IN (<query>)` — the query selects the one column the value is looked for in. */
 	public static function inQuery<T, TQuery>(value:T, query:TQuery):Bool;

@@ -30,8 +30,13 @@ class SchemaBuilder {
 		}
 
 		final tables:Array<Expr> = [];
+		final views:Array<Expr> = [];
 		for (field in declared.fields.get()) {
 			if (!field.isPublic) {
+				continue;
+			}
+			if (IsView(field.type)) {
+				views.push(ViewOf(field));
 				continue;
 			}
 			final entity = EntityOfTable(field.type);
@@ -42,10 +47,56 @@ class SchemaBuilder {
 		}
 
 		final list = {expr: EArrayDecl(tables), pos: schema.pos};
-		return macro new codequery.migrations.DatabaseSchema($list, $v{declared.name});
+		final viewList = {expr: EArrayDecl(views), pos: schema.pos};
+		// A view's definition is a query the member holds, so the schema instance is read for it —
+		// once, whatever expression named it.
+		return macro {
+			final declared = $schema;
+			new codequery.migrations.DatabaseSchema($list, $v{declared.name}, 1, $viewList);
+		};
 	}
 
 	#if macro
+	/** Whether a member is a `DbView<T>`, or a class of its own extending one. */
+	static function IsView(type:Type):Bool {
+		return switch type.follow() {
+			case TInst(t, _): ExtendsView(t.get());
+			case _: false;
+		}
+	}
+
+	static function ExtendsView(row:ClassType):Bool {
+		if (row.name == "DbView" && row.pack.join(".") == "codequery") {
+			return true;
+		}
+		return row.superClass != null && ExtendsView(row.superClass.t.get());
+	}
+
+	/**
+		The view a member declares, migrated as its `@dbMigration(<strategy>)` says — on the member,
+		or on the view's own class where it has one — and replaced in place where nothing says.
+	**/
+	static function ViewOf(field:ClassField):Expr {
+		final name = field.name;
+		final strategy = StrategyOf(field.meta.extract("dbMigration"));
+		final declaredOnClass = switch field.type.follow() {
+			case TInst(t, _): StrategyOf(t.get().meta.extract("dbMigration"));
+			case _: null;
+		}
+		final chosen = strategy != null ? strategy : (declaredOnClass != null ? declaredOnClass : macro null);
+		return macro codequery.migrations.DatabaseViewDefinition.Of(declared.$name, $chosen);
+	}
+
+	static function StrategyOf(meta:Array<MetadataEntry>):Null<Expr> {
+		// Written as a string — `@dbMigration("DropThenCreate")` — since metadata kept at runtime
+		// holds constants only; an identifier is taken too, where the metadata allows it.
+		return switch meta {
+			case [{params: [{expr: EConst(CIdent(strategy) | CString(strategy, _))}]}]:
+				macro $p{["codequery", "migrations", "DbMigrationStrategy", strategy]};
+			case _: null;
+		}
+	}
+
 	/** The row type of a `DbTable<T>`, or null for a member that is not one. */
 	static function EntityOfTable(type:Type):Null<Type> {
 		return switch type.follow() {

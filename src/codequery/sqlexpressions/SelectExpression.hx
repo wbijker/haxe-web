@@ -72,6 +72,37 @@ class SelectExpression implements ISqlStatement {
 		return sources;
 	}
 
+	/**
+		True when nothing has been added but the three clauses that say *which* of the rows come
+		back rather than what they hold: DISTINCT, LIMIT and OFFSET. They name no columns, so they
+		mean the same thing written into a query as around it — which is what lets
+		`.Select(…).Distinct()` be one statement instead of a statement wrapped around another.
+	**/
+	public function IsEmptyApartFromRowRules():Bool {
+		return Selection == null
+			&& Where == null
+			&& Joins.length == 0
+			&& OrderBy.length == 0
+			&& GroupBy.length == 0
+			&& GroupingSets.length == 0
+			&& Having == null
+			&& Unions.length == 0
+			&& With.length == 0
+			&& Windows.length == 0
+			&& DistinctOn.length == 0
+			&& Lock == None;
+	}
+
+	/** True when no clause at all has been added. */
+	public function IsEmpty():Bool {
+		return IsEmptyApartFromRowRules() && !IsDistinct && Limit == null && Offset == null;
+	}
+
+	/** True when this is just `SELECT * FROM (subquery)` with nothing of its own. */
+	public function IsSimpleWrapper():Bool {
+		return Std.downcast(cast Source, QuerySqlSource) != null && IsEmpty();
+	}
+
 	/** A copy, so a clause answers with a statement of its own and leaves this one alone. */
 	public function Fork():SelectExpression {
 		final copy = new SelectExpression(Source);

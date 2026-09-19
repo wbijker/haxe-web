@@ -201,6 +201,30 @@ class SqlAssert {
 		return d;
 	}
 
+	/**
+		The source a column belongs to. A column reached through a lambda parameter names its source
+		by position and only the statement knows which that is, so it is looked up here — which is
+		how a test asks what C# asks with `AssertColumn(e, "Id", booking.Alias)`.
+	**/
+	public static function sourceOf(select:SelectExpression, e:ISqlExpression):ISqlSource {
+		final c = column(e);
+		final parameter = Std.downcast(cast c.Source, ParameterSqlSource);
+		if (parameter == null) {
+			return c.Source;
+		}
+		final sources = select.AllSources();
+		Assert.isTrue(parameter.Scope == 0, "Expected a column of this statement, not one further out");
+		Assert.inRange(parameter.Index, 0, sources.length - 1);
+		return sources[parameter.Index];
+	}
+
+	/** A column called `name`, belonging to the source known as `alias` in this statement. */
+	public static function columnIn(select:SelectExpression, e:ISqlExpression, name:String, alias:String):ColumnSqlExpression {
+		final c = column(e, name);
+		Assert.equals(alias, sourceOf(select, e).Alias, "column source alias");
+		return c;
+	}
+
 	// ---- statement access: SELECT ------------------------------------------------------------
 
 	public static function whereClause(select:SelectExpression):ISqlExpression {
@@ -319,6 +343,11 @@ class SqlAssert {
 		final c = Std.downcast(cast source, CteSqlSource);
 		if (c != null) {
 			return c.Cte.Name;
+		}
+		// A subquery that is only a table read is that table, as C# treats it.
+		final q = Std.downcast(cast source, QuerySqlSource);
+		if (q != null && q.Query.IsEmpty()) {
+			return tableName(q.Query.Source);
 		}
 		return Assert.fail('${Type.getClassName(Type.getClass(source))} has no table name');
 	}

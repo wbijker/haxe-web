@@ -12,4 +12,7 @@ enum SchemaChange {
 	AddColumn(table:String, column:DatabaseColumnDefinition);
 	DropColumn(table:String, column:DatabaseColumnDefinition);
 	AlterColumn(table:String, from:DatabaseColumnDefinition, to:DatabaseColumnDefinition);
+	CreateView(view:DatabaseViewDefinition);
+	DropView(view:DatabaseViewDefinition);
+	AlterView(from:DatabaseViewDefinition, to:DatabaseViewDefinition);
 }
