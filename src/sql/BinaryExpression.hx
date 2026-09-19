@@ -17,14 +17,6 @@ class BinaryExpression extends SqlExpression {
 		return '${operand(left)} ${(op : String)} ${operand(right)}';
 	}
 
-	public function describe(indent:String = ""):String {
-		final child = indent + "  ";
-		return '${indent}BinaryExpression\n'
-			+ '${child}operator: ${(op : String)}\n'
-			+ '${child}left:\n${left.describe(child + "  ")}\n'
-			+ '${child}right:\n${right.describe(child + "  ")}';
-	}
-
 	/** Parenthesise a child only when it binds more loosely than we do. */
 	function operand(e:SqlExpression):String {
 		final nested = Std.downcast(e, BinaryExpression);

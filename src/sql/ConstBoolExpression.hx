@@ -12,8 +12,4 @@ class ConstBoolExpression extends SqlExpression {
 	public function toSql():String {
 		return value ? "1" : "0";
 	}
-
-	public function describe(indent:String = ""):String {
-		return '${indent}ConstBoolExpression($value)';
-	}
 }

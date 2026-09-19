@@ -82,11 +82,3 @@ at the offending part of the predicate:
 Main.hx:3: characters 36-48 : Delivery has no field "noteNumber"
 Main.hx:3: characters 36-44 : Operator + has no SQL equivalent
 ```
-
-### Seeing the tree
-
-```sh
-haxe build.hxml -D sql-debug
-```
-
-prints each predicate's `SqlExpression` tree during compilation.

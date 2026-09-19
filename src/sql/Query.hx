@@ -16,8 +16,6 @@ using haxe.macro.ExprTools;
 	A Haxe macro gets the syntax tree at *compile time* instead, so the whole
 	analysis happens during compilation and the call site is left holding nothing
 	but the finished SQL string.
-
-	Compile with `-D sql-debug` to have the tree printed during compilation.
 **/
 class Query {
 	/**
@@ -28,11 +26,7 @@ class Query {
 		part of the predicate.
 	**/
 	public static macro function where(predicate:ExprOf<model.Delivery->Bool>):ExprOf<String> {
-		final ast = parsePredicate(predicate);
-		if (Context.defined("sql-debug")) {
-			Context.info('where() AST:\n${ast.describe("  ")}', predicate.pos);
-		}
-		return macro $v{ast.toSql()};
+		return macro $v{parsePredicate(predicate).toSql()};
 	}
 
 	#if macro

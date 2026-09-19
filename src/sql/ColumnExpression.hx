@@ -14,8 +14,4 @@ class ColumnExpression extends SqlExpression {
 	public function toSql():String {
 		return '$table.$name';
 	}
-
-	public function describe(indent:String = ""):String {
-		return '${indent}ColumnExpression($table.$name)';
-	}
 }

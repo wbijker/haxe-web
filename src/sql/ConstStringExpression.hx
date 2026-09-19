@@ -12,8 +12,4 @@ class ConstStringExpression extends SqlExpression {
 	public function toSql():String {
 		return "'" + StringTools.replace(value, "'", "''") + "'";
 	}
-
-	public function describe(indent:String = ""):String {
-		return '${indent}ConstStringExpression(${toSql()})';
-	}
 }

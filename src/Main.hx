@@ -9,8 +9,7 @@ class Main {
 		log("d -> d.id > 10 && d.noteNo != \"\"", Query.where(d -> d.id > 10 && d.noteNo != ""));
 
 		// Parentheses appear only where precedence actually needs them.
-		log("d -> (d.id < 5 || d.id > 100) && d.toStoreId == 3",
-			Query.where(d -> (d.id < 5 || d.id > 100) && d.toStoreId == 3));
+		log("d -> (d.id < 5 || d.id > 100) && d.toStoreId == 3", Query.where(d -> (d.id < 5 || d.id > 100) && d.toStoreId == 3));
 
 		Sys.println("");
 		Sys.println('SELECT * FROM Delivery d WHERE ${Query.where(d -> d.id > 10)}');

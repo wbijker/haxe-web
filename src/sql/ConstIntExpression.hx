@@ -12,8 +12,4 @@ class ConstIntExpression extends SqlExpression {
 	public function toSql():String {
 		return Std.string(value);
 	}
-
-	public function describe(indent:String = ""):String {
-		return '${indent}ConstIntExpression($value)';
-	}
 }

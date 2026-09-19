@@ -6,7 +6,4 @@ abstract class SqlExpression {
 
 	/** Render this node as SQL. */
 	public abstract function toSql():String;
-
-	/** Render this node as an indented tree, for debugging macros. */
-	public abstract function describe(indent:String = ""):String;
 }
