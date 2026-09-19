@@ -179,8 +179,21 @@ class SelectQueryImpl {
 		return Fork(expression -> expression.Percent = true);
 	}
 
+	/**
+		`SELECT <projection>`, and a query of the shape it projects.
+
+		The query it answers with reads the columns this one selects, not the ones this one reads —
+		`.Select(b -> {total: b.totalCents}).Where(r -> r.total > 0)` is a condition on `total`,
+		which only exists once the projection has happened. So this statement becomes the source of
+		a new one rather than being amended, which is what C# does and what makes a projection
+		something that can be queried again.
+	**/
 	public function SelectProjection(selection:ISqlExpression):SelectQueryImpl {
-		return Fork(expression -> expression.Selection = selection);
+		final projected = SelectExpression.Fork();
+		projected.Selection = selection;
+
+		final context = new SourceContext();
+		return new SelectQueryImpl(new SelectExpression(context.AddQuerySource(projected)), context);
 	}
 
 	public function JoinTable(type:JoinType, table:IQueryTable, ?on:ISqlExpression):SelectQueryImpl {

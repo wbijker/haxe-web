@@ -31,7 +31,7 @@ class Main {
 		// member, so the names are written out.
 		show(db.Bookings.From()
 			.Select(f -> {guestId: f.guestId})
-			// .Select(f -> {a: f.guestId})
+			.Select(f -> {a: f.guestId})
 			// .Select(f -> {forex: f.price.forex, type: f.price.type, zar: f.price.zar})
 			.ToExpression());
 

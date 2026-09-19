@@ -169,8 +169,7 @@ class ExpressionConverter {
 					Context.error('Only a column of a row this lambda is written over, or a constant, can be used here',
 						e.pos);
 				}
-				final row = rows[reached.row];
-				ColumnsBuilder.Member(ColumnsBuilder.Of(row, reached.row), MemberOf(reached.path, row, e.pos));
+				ColumnFor(rows[reached.row], reached.row, reached.path, e.pos);
 
 			case EConst(CInt(v, _)):
 				macro ${Factory("constInt")}($v{Std.parseInt(v)});
@@ -288,8 +287,7 @@ class ExpressionConverter {
 					{expr: ExprTools.map(e, inner -> SubstituteOuter(inner, bound, rows)).expr, pos: e.pos};
 				} else {
 					final row = rows[reached.row];
-					final column = ColumnsBuilder.Member(ColumnsBuilder.Of(row, reached.row),
-						MemberOf(reached.path, row, e.pos));
+					final column = ColumnFor(row, reached.row, reached.path, e.pos);
 					// Annotated with what the member holds, so the inner query still type-checks —
 					// a predicate is typed before it is read, and a column is not an Int.
 					final held = MemberTypeOf(reached.path, row, e.pos).toComplexType();
@@ -503,29 +501,55 @@ class ExpressionConverter {
 	}
 
 	/**
+		How a column of `row` is reached, by the path of members named to get to it.
+
+		An entity's columns come from its generated statics, which carry the names its metadata
+		settles. A projection answers with an anonymous structure — no name, no package, no
+		metadata — so there is nothing to generate statics from and nothing they would say: a
+		member of one is a column of that name, built where it is used.
+	**/
+	static function ColumnFor(row:Type, index:Int, path:Array<String>, pos:Position):Expr {
+		final name = MemberOf(path, row, pos);
+		if (!IsStructure(row)) {
+			return ColumnsBuilder.Member(ColumnsBuilder.Of(row, index), name);
+		}
+		return macro new codequery.sqlexpressions.ColumnSqlExpression(
+			codequery.sqlexpressions.ParameterSqlSource.At($v{index}), $v{name});
+	}
+
+	/** Whether a row is an anonymous structure — what a projection answers with. */
+	static function IsStructure(row:Type):Bool {
+		return row.follow().match(TAnonymous(_));
+	}
+
+	/** The fields a row has, whether it is a class or a structure. */
+	static function FieldsOf(row:Type):Null<Array<ClassField>> {
+		return switch row.follow() {
+			case TInst(t, _): t.get().fields.get();
+			case TAnonymous(a): a.get().fields;
+			case _: null;
+		}
+	}
+
+	/**
 		Checks that the row really has this path, so that a typo is a compile error here rather than
-		a confusing one about the generated columns type. Answers with the name that type calls the
-		member; the column it maps to is settled there.
+		a confusing one further on. Answers with the name the column is known by, which for a nested
+		member is the path to it.
 	**/
 	static function MemberOf(path:Array<String>, entity:Type, pos:Position):String {
-		var row = switch entity.follow() {
-			case TInst(t, _): t.get();
-			case _: Context.error('${entity.toString()} is not a class, so it has no columns', pos);
-		}
-
+		var row = entity;
 		for (step in 0...path.length) {
 			final found = FieldNamed(row, path[step]);
 			if (found == null) {
-				final reached = step == 0 ? row.name : '${row.name} (reached by ${path.slice(0, step).join(".")})';
+				final reached = step == 0
+					? row.toString()
+					: '${row.toString()} (reached by ${path.slice(0, step).join(".")})';
 				Context.error('$reached has no field "${path[step]}"', pos);
 			}
 			if (step == path.length - 1) {
 				break;
 			}
-			row = switch found.type.follow() {
-				case TInst(t, _): t.get();
-				case t: Context.error('${path[step]} is ${t.toString()}, which has no members to reach', pos);
-			}
+			row = found.type;
 		}
 
 		return path.join(ColumnsBuilder.Separator);
@@ -533,31 +557,25 @@ class ExpressionConverter {
 
 	/** What the member at the end of a path holds. */
 	static function MemberTypeOf(path:Array<String>, entity:Type, pos:Position):Type {
-		var row = switch entity.follow() {
-			case TInst(t, _): t.get();
-			case t: Context.error('${t.toString()} has no members to reach', pos);
-		}
-
+		var row = entity;
 		var held:Null<Type> = null;
 		for (step in 0...path.length) {
 			final found = FieldNamed(row, path[step]);
 			if (found == null) {
-				Context.error('${row.name} has no field "${path[step]}"', pos);
+				Context.error('${row.toString()} has no field "${path[step]}"', pos);
 			}
 			held = found.type;
-			if (step == path.length - 1) {
-				break;
-			}
-			row = switch found.type.follow() {
-				case TInst(t, _): t.get();
-				case t: Context.error('${path[step]} is ${t.toString()}, which has no members to reach', pos);
-			}
+			row = found.type;
 		}
 		return held;
 	}
 
-	static function FieldNamed(row:ClassType, name:String):Null<ClassField> {
-		for (field in row.fields.get()) {
+	static function FieldNamed(row:Type, name:String):Null<ClassField> {
+		final fields = FieldsOf(row);
+		if (fields == null) {
+			return null;
+		}
+		for (field in fields) {
 			if (field.name == name) {
 				return field;
 			}
@@ -625,7 +643,10 @@ class ExpressionConverter {
 
 			// A row on its own selects that row's columns.
 			case EConst(CIdent(name)) if (bound.exists(name)):
-				final source = ColumnsBuilder.Member(ColumnsBuilder.Of(rows[bound[name]], bound[name]), "Source");
+				final index = bound[name];
+				final source = IsStructure(rows[index])
+					? macro codequery.sqlexpressions.ParameterSqlSource.At($v{index})
+					: ColumnsBuilder.Member(ColumnsBuilder.Of(rows[index], index), "Source");
 				macro new codequery.sqlexpressions.AllColumnsSqlExpression($source);
 
 			// One expression, naming nothing — `a -> a.name`, which C# answers with a query of that
