@@ -16,6 +16,7 @@ import codequery.sqlexpressions.NamedWindowSqlSource;
 import codequery.sqlexpressions.NullsOrdering;
 import codequery.sqlexpressions.OrderByExpression;
 import codequery.sqlexpressions.SelectExpression;
+import codequery.sqlexpressions.QuerySqlSource;
 import codequery.sqlexpressions.SourceContext;
 import codequery.sqlexpressions.SqlBinaryOperator;
 
@@ -46,6 +47,34 @@ class SelectQueryImpl {
 	}
 
 	public function ToExpression():SelectExpression {
+		// Unwrap if this is just SELECT * FROM (subquery), as the C# original does: a projection is
+		// one statement until a clause naming its columns is written around it.
+		final wrapped = Std.downcast(cast SelectExpression.Source, QuerySqlSource);
+		if (wrapped == null) {
+			return SelectExpression;
+		}
+		if (SelectExpression.IsSimpleWrapper()) {
+			return wrapped.Query;
+		}
+
+		// The same wrapper carrying only DISTINCT, LIMIT or OFFSET: those move inside rather than
+		// needing a statement of their own. They move only into a query that has none of them
+		// already and no UNION — otherwise the two would compose ("the first of the first ten") and
+		// folding would quietly mean something else.
+		if (SelectExpression.IsEmptyApartFromRowRules()
+			&& !wrapped.Query.IsDistinct
+			&& wrapped.Query.DistinctOn.length == 0
+			&& wrapped.Query.Limit == null
+			&& wrapped.Query.Offset == null
+			&& wrapped.Query.Unions.length == 0) {
+			// Forked rather than written on: the inner query belongs to the query this one was
+			// projected from, which may still be used on its own.
+			final folded = wrapped.Query.Fork();
+			folded.IsDistinct = SelectExpression.IsDistinct;
+			folded.Limit = SelectExpression.Limit;
+			folded.Offset = SelectExpression.Offset;
+			return folded;
+		}
 		return SelectExpression;
 	}
 

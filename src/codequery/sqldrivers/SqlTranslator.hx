@@ -40,6 +40,10 @@ import codequery.sqlexpressions.ProjectionSqlExpression;
 import codequery.sqlexpressions.QuerySqlSource;
 import codequery.sqlexpressions.SelectExpression;
 import codequery.sqlexpressions.SqlBinaryOperator;
+import codequery.sqlexpressions.StringOperationExpression;
+import codequery.sqlexpressions.DateOperationSqlExpression;
+import codequery.sqlexpressions.DateFormatSqlExpression;
+import codequery.sqlexpressions.IntervalSqlExpression;
 import codequery.sqlexpressions.SqlConstValue;
 import codequery.sqlexpressions.TableSqlSource;
 
@@ -483,6 +487,11 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 	}
 
 	public function OnFunction(e:SqlFunctionExpression):String {
+		// A name core defined is spelled by the dialect; any other name is a plain call.
+		final known = FunctionRendering.KnownFunction(e, this);
+		if (known != null) {
+			return known;
+		}
 		final arguments = e.Arguments.map(RenderExpression);
 		return e.Infix ? arguments.join(' ${e.Name} ') : '${e.Name}(${arguments.join(", ")})';
 	}
@@ -771,5 +780,23 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 			case SqlConstDate(v): "'" + DateTools.format(v, "%Y-%m-%d %H:%M:%S") + "'";
 			case SqlConstNull: "NULL";
 		}
+	}
+
+	// ---- functions, dates and spans ----------------------------------------------------------
+
+	public function OnStringOperation(e:StringOperationExpression):String {
+		return FunctionRendering.StringOperation(e, this);
+	}
+
+	public function OnDateOperation(e:DateOperationSqlExpression):String {
+		return FunctionRendering.DateOperation(e, this);
+	}
+
+	public function OnDateFormat(e:DateFormatSqlExpression):String {
+		return FunctionRendering.DateFormat(e, this);
+	}
+
+	public function OnInterval(e:IntervalSqlExpression):String {
+		return FunctionRendering.Interval(e);
 	}
 }

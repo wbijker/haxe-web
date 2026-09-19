@@ -131,6 +131,11 @@ class ExpressionConverter {
 	/** Haxe syntax in, an expression that builds the SQL tree out. */
 	static function ToSqlExpression(e:Expr, bound:Map<String, Int>, rows:Array<Type>):Expr {
 		final e = Unwrap(e);
+		// A call of a string's or a date's methods, a span, an inline function: read there first.
+		final extended = FunctionConverter.Convert(e, bound, rows);
+		if (extended != null) {
+			return extended;
+		}
 		return switch e.expr {
 			case EBinop(op, left, right):
 				final quantified = Quantified(op, left, right, bound, rows, e.pos);
@@ -423,6 +428,23 @@ class ExpressionConverter {
 			case "trim": macro codequery.sqlexpressions.Expr.call("TRIM", ${list(0)});
 			case "substring": macro codequery.sqlexpressions.Expr.call("SUBSTRING", ${list(0)});
 			case "concat": macro codequery.sqlexpressions.Expr.infix("||", ${list(0)});
+
+			case "now": macro codequery.sqlexpressions.Expr.call(codequery.sqlexpressions.SqlFunctions.Now, []);
+			case "utcNow": macro codequery.sqlexpressions.Expr.call(codequery.sqlexpressions.SqlFunctions.UtcNow, []);
+			case "today": macro codequery.sqlexpressions.Expr.call(codequery.sqlexpressions.SqlFunctions.Today, []);
+			case "isLeapYear": macro codequery.sqlexpressions.Expr.call(codequery.sqlexpressions.SqlFunctions.IsLeapYear, ${list(0)});
+			case "daysInMonth": macro codequery.sqlexpressions.Expr.call(codequery.sqlexpressions.SqlFunctions.DaysInMonth, ${list(0)});
+			case "dateFromParts": macro codequery.sqlexpressions.Expr.call(codequery.sqlexpressions.SqlFunctions.DateTimeFromParts, ${list(0)});
+
+			// The name is written at the call site, so that what reaches the database is a name.
+			case "call":
+				final called = switch Unwrap(args[0]).expr {
+					case EConst(CString(s, _)): s;
+					case _: Context.error("The function's name has to be written at the call site — "
+							+ "Sql.call(\"word_similarity\", a, b) — so that what reaches the database is a name and not a value.",
+							args[0].pos);
+				}
+				macro codequery.sqlexpressions.Expr.callNamed($v{called}, ${list(1)});
 
 			case _: Context.error('Sql.$name has no SQL here yet', pos);
 		}

@@ -113,4 +113,37 @@ class SelectExpression implements ISqlStatement {
 		copy.Percent = Percent;
 		return copy;
 	}
+
+	/**
+		True when nothing has been added but the three clauses that say *which* of the rows come
+		back rather than what they hold: DISTINCT, LIMIT and OFFSET.
+
+		They are apart from the rest because they name no columns. A WHERE or an ORDER BY on a
+		wrapper is written against the wrapper's own source and cannot be moved inside it without
+		rewriting what it refers to; these three can be moved as they are.
+	**/
+	public function IsEmptyApartFromRowRules():Bool {
+		return Selection == null
+			&& Where == null
+			&& Joins.length == 0
+			&& OrderBy.length == 0
+			&& GroupBy.length == 0
+			&& GroupingSets.length == 0
+			&& Having == null
+			&& Unions.length == 0
+			&& DistinctOn.length == 0
+			&& Windows.length == 0
+			&& With.length == 0
+			&& Lock == None;
+	}
+
+	/** True when no clause has been added at all. */
+	public function IsEmpty():Bool {
+		return IsEmptyApartFromRowRules() && !IsDistinct && Limit == null && Offset == null;
+	}
+
+	/** True when this is just `SELECT * FROM (subquery)` with nothing added. */
+	public function IsSimpleWrapper():Bool {
+		return Std.isOfType(Source, QuerySqlSource) && IsEmpty();
+	}
 }

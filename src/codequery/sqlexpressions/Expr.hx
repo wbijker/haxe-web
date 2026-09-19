@@ -1,5 +1,6 @@
 package codequery.sqlexpressions;
 
+
 /**
 	Factory methods for the expression tree.
 
@@ -185,5 +186,63 @@ class Expr {
 
 	public static function modulo(left:ISqlExpression, right:ISqlExpression):BinarySqlExpression {
 		return new BinarySqlExpression(left, Modulo, right);
+	}
+
+	// ---- functions, dates and spans ----------------------------------------------------------
+
+	/** `s LIKE '%x%'`, `'x%'` or `'%x'`, with the wildcards left for the translator to add. */
+	public static function stringOperation(operand:ISqlExpression, operation:StringOperationType,
+			pattern:ISqlExpression):StringOperationExpression {
+		return new StringOperationExpression(operand, operation, pattern);
+	}
+
+	/** A date truncated, counted or read by a named part. */
+	public static function dateOperation(operation:codequery.DateTimePart.DateOperation, part:codequery.DateTimePart,
+			value:ISqlExpression, ?other:ISqlExpression):DateOperationSqlExpression {
+		return new DateOperationSqlExpression(operation, part, value, other);
+	}
+
+	/** A date formatted by the parts a format names. */
+	public static function dateFormat(value:ISqlExpression,
+			format:codequery.DateFormat.IDateFormat->codequery.DateFormat.IDateFormat):DateFormatSqlExpression {
+		return new DateFormatSqlExpression(value, codequery.DateFormat.DateFormatRecorder.Record(format));
+	}
+
+	/** A span of time, written as `INTERVAL '…'`. */
+	public static function interval(span:codequery.SqlInterval):IntervalSqlExpression {
+		return new IntervalSqlExpression(span.Milliseconds);
+	}
+
+	/** A call of a function the library does not name, checked to be a function's name. */
+	public static function callNamed(name:String, arguments:Array<ISqlExpression>):SqlCallExpression {
+		return new SqlCallExpression(name, arguments);
+	}
+
+	/**
+		A value sent beside the statement, whatever kind it turns out to be.
+
+		What an inline function computed while the query was built: known only at run time, so the
+		kind is read off the value rather than off its type.
+	**/
+	public static function paramOf(value:Dynamic):ISqlExpression {
+		if (value == null) {
+			return constNull();
+		}
+		if (Std.isOfType(value, Bool)) {
+			return param(SqlConstBool(value));
+		}
+		if (Std.isOfType(value, Int)) {
+			return param(SqlConstInt(value));
+		}
+		if (Std.isOfType(value, Float)) {
+			return param(SqlConstFloat(value));
+		}
+		if (Std.isOfType(value, String)) {
+			return param(SqlConstString(value));
+		}
+		if (Std.isOfType(value, Date)) {
+			return param(SqlConstDate(value));
+		}
+		throw '${Std.string(value)} is not something a parameter can hold';
 	}
 }

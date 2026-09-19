@@ -68,6 +68,18 @@ class SqlExpressionWalker {
 		final ordering = Std.downcast(cast e, OrderByExpression);
 		if (ordering != null) return visitor.OnOrderBy(ordering);
 
+		final stringOperation = Std.downcast(cast e, StringOperationExpression);
+		if (stringOperation != null) return visitor.OnStringOperation(stringOperation);
+
+		final dateOperation = Std.downcast(cast e, DateOperationSqlExpression);
+		if (dateOperation != null) return visitor.OnDateOperation(dateOperation);
+
+		final dateFormat = Std.downcast(cast e, DateFormatSqlExpression);
+		if (dateFormat != null) return visitor.OnDateFormat(dateFormat);
+
+		final interval = Std.downcast(cast e, IntervalSqlExpression);
+		if (interval != null) return visitor.OnInterval(interval);
+
 		throw 'No visitor case for ${Type.getClassName(Type.getClass(e))}';
 	}
 }

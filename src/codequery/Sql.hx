@@ -124,4 +124,42 @@ extern class Sql {
 
 	/** `FLOOR(x)`. */
 	public static function floor(value:Float):Float;
+
+	/** `NOW()` — the database's clock. `Date.now()` says the same inside a lambda. */
+	public static function now():Date;
+
+	/** `NOW() AT TIME ZONE 'UTC'`. */
+	public static function utcNow():Date;
+
+	/** `CURRENT_DATE`. */
+	public static function today():Date;
+
+	/** Whether `year` is a leap year — named as C#'s `DateTime.IsLeapYear`; no dialect spells it yet. */
+	public static function isLeapYear(year:Int):Bool;
+
+	/** The days in a month — named as C#'s `DateTime.DaysInMonth`; no dialect spells it yet. */
+	public static function daysInMonth(year:Int, month:Int):Int;
+
+	/**
+		A date built from its parts, as C#'s `new DateTime(y, m, d)` is. `new Date(y, m, d, h, mi, s)`
+		says the same inside a lambda, reading a row; with none of its parts read off a row it is
+		the date it makes.
+	**/
+	public static function dateFromParts(year:Int, month:Int, day:Int, ?hour:Int, ?minute:Int, ?second:Int):Date;
+
+	/**
+		Calls `name` with `arguments` — a function the library has no word for, because it belongs to
+		an extension, to a dialect, or to you:
+
+		```haxe
+		.OrderByDesc(p -> Sql.call("word_similarity", p.name, term))
+		// ORDER BY word_similarity(t0.name, 'bolt') DESC
+		```
+
+		The arguments are ordinary expressions, so columns and values are still the compiler's
+		business; only the name is a string, written at the call site, and it has to be an
+		identifier. This is not a way to write SQL by hand — a name that is anything other than a
+		function's is refused.
+	**/
+	public static function call<T>(name:String, arguments:haxe.extern.Rest<Dynamic>):T;
 }
