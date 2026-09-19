@@ -13,6 +13,8 @@ class Main {
 
 		Sys.println("");
 		Sys.println('SELECT * FROM Delivery d WHERE ${Query.where(d -> d.id > 10)}');
+
+		Query.where(e -> e.id == 10);
 	}
 
 	static function log(predicate:String, sql:String) {

@@ -26,12 +26,29 @@ class Query {
 		part of the predicate.
 	**/
 	public static macro function where(predicate:ExprOf<model.Delivery->Bool>):ExprOf<String> {
+		typePredicate(predicate);
 		return macro $v{parsePredicate(predicate).toSql()};
 	}
 
 	#if macro
 	/** The entity the predicate is written against. */
 	static inline final ENTITY = "model.Delivery";
+
+	/**
+		Type the predicate against `Delivery -> Bool`, then throw the result away.
+
+		Nothing else here ever types it: the tree is read as syntax and replaced
+		by a string. But Haxe answers completion, hover and go-to-definition
+		*while typing* an expression, so without this an editor has nothing to
+		offer inside the lambda. Typing it also type-checks the body for free.
+
+		The typed expression is discarded, so none of it reaches the output.
+	**/
+	static function typePredicate(predicate:Expr):Void {
+		final entity = Context.toComplexType(Context.getType(ENTITY));
+		final signature = ComplexType.TFunction([entity], macro :Bool);
+		Context.typeExpr(macro @:pos(predicate.pos) ($predicate : $signature));
+	}
 
 	/** Pull the parameter name and body out of the lambda, then translate the body. */
 	static function parsePredicate(predicate:Expr):SqlExpression {

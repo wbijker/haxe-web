@@ -79,12 +79,38 @@ the finished string — the AST classes never reach the generated output.
 - Constants — `Int`, `String`, `Bool`
 - Binary operators — `== != > >= < <=` and `&& ||`
 
+### Editor support inside the lambda
+
+A macro receives its argument as *syntax*, and Haxe answers completion, hover
+and go-to-definition while **typing** an expression. A macro that only reads the
+syntax tree and returns a string therefore never types its argument, and an
+editor has nothing to offer inside the lambda — no completion after `d.`, no
+jump to the field, no hover. `ExprOf<T>` does not change this; it documents the
+expected type, it does not cause typing.
+
+So `where()` types the predicate against `Delivery -> Bool` and discards the
+result:
+
+```haxe
+final entity = Context.toComplexType(Context.getType(ENTITY));
+final signature = ComplexType.TFunction([entity], macro :Bool);
+Context.typeExpr(macro @:pos(predicate.pos) ($predicate : $signature));
+```
+
+The typed expression is thrown away, so the generated code is byte for byte what
+it was without it — but the editor now has a typed tree to answer questions
+against, and the body is type-checked for free.
+
 ### Compile errors, not runtime surprises
 
 Field names are checked against the real `Delivery` type, and the error points
 at the offending part of the predicate:
 
 ```
-Main.hx:3: characters 36-48 : Delivery has no field "noteNumber"
+Main.hx:3: characters 38-48 : model.Delivery has no field noteNumber
+Main.hx:3: characters 36-49 : Cannot compare String and Int
 Main.hx:3: characters 36-44 : Operator + has no SQL equivalent
 ```
+
+The first two come from typing the predicate, the third from the translation
+itself.
