@@ -162,8 +162,8 @@ class Integration_FlattenObjectTests extends TestCase {
 			.ToExpression());
 
 		// Named "cost" on the way out, and the column it always was on the way in.
-		Assert.contains("t1.baseline_amount AS cost_amount", sql);
-		Assert.contains("WHERE t0.cost_amount > 100", sql);
+		Assert.contains("t0.baseline_amount AS cost_amount", sql);
+		Assert.contains("WHERE t0.baseline_amount > 100", sql);
 	}
 
 	function testReducedAtTheJoin_TheObjectItselfIsStillItsColumns() {
@@ -175,7 +175,7 @@ class Integration_FlattenObjectTests extends TestCase {
 
 		// Selected on its own it is its fields again, under their own names — which is what a
 		// reader needs to hand back a cost rather than two loose columns.
-		Assert.contains("SELECT t0.cost_amount AS amount, t0.cost_currency AS currency", sql);
+		Assert.contains("SELECT t0.baseline_amount AS amount, t0.baseline_currency AS currency", sql);
 	}
 
 	function testReducedAfterTheJoin_SaysTheSameThingAsReducingAtIt() {
@@ -191,11 +191,11 @@ class Integration_FlattenObjectTests extends TestCase {
 			.Where(l -> l.cost.amount > l.agreed.amount)
 			.ToExpression());
 
-		Assert.contains("t1.baseline_amount AS cost_amount", sql);
-		Assert.contains("t3.terms_amount AS agreed_amount", sql);
+		Assert.contains("t0.baseline_amount AS cost_amount", sql);
+		Assert.contains("t2.terms_amount AS agreed_amount", sql);
 
 		// Each object still belongs to the source it came off, which is the whole point of carrying two.
-		Assert.contains("WHERE t0.cost_amount > t0.agreed_amount", sql);
+		Assert.contains("WHERE t0.baseline_amount > t2.terms_amount", sql);
 	}
 
 	function testReducedTwice_TheObjectIsStillItsColumns() {
@@ -208,10 +208,9 @@ class Integration_FlattenObjectTests extends TestCase {
 			.ToExpression());
 
 		// Carried as `cost`, then carried again as `agreed`.
-		Assert.contains("t1.cost_amount AS agreed_amount", sql);
-		Assert.contains("t1.cost_currency AS agreed_currency", sql);
-		Assert.contains("t3.baseline_amount AS cost_amount", sql);
-		Assert.contains("WHERE t0.agreed_currency = 'USD'", sql);
+		Assert.contains("t0.baseline_amount AS agreed_amount", sql);
+		Assert.contains("t0.baseline_currency AS agreed_currency", sql);
+		Assert.contains("WHERE t0.baseline_currency = 'USD'", sql);
 	}
 
 	function testAReducedRow_IsReadBackWithItsObjectWhole() {

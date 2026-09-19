@@ -96,7 +96,17 @@ class SelectQueryExtensions {
 		of its own, `(a, b) -> b`.
 	**/
 	public static macro function Reduce(self:Expr, reduce:Expr):Expr {
-		return Projected(self, reduce);
+		return ExpressionConverter.Reduced(self, reduce);
+	}
+
+	/**
+		`PIVOT`, portably: one conditional aggregate per pivot value beside the group-by columns —
+		`.Pivot(RegionPivot, s -> s.quarter, s -> s.amount, Sum, [{key: "Q1", column: "Q1"}], s -> {region: s.region})`.
+		The first argument names the row type the pivot answers with, as C#'s `<TValue, TResult>` does.
+	**/
+	public static macro function Pivot(self:Expr, result:Expr, forColumn:Expr, value:Expr, aggregate:Expr, pivots:Expr,
+			?groupBy:Expr):Expr {
+		return ExpressionConverter.Pivot(self, result, forColumn, value, aggregate, pivots, groupBy);
 	}
 
 	/**
@@ -257,23 +267,23 @@ class SelectQueryExtensions {
 		`INNER JOIN <source> ON <on>`. The source is a table or another query, and the condition is
 		written over every row the query now has: `(a, b, c) -> …` after two joins.
 	**/
-	public static macro function InnerJoin(self:Expr, source:Expr, on:Expr):Expr {
-		return ExpressionConverter.Join(self, source, on, "Inner");
+	public static macro function InnerJoin(self:Expr, source:Expr, on:Expr, ?reduce:Expr):Expr {
+		return ExpressionConverter.Join(self, source, on, "Inner", reduce);
 	}
 
 	/** `LEFT JOIN <source> ON <on>`. */
-	public static macro function LeftJoin(self:Expr, source:Expr, on:Expr):Expr {
-		return ExpressionConverter.Join(self, source, on, "Left");
+	public static macro function LeftJoin(self:Expr, source:Expr, on:Expr, ?reduce:Expr):Expr {
+		return ExpressionConverter.Join(self, source, on, "Left", reduce);
 	}
 
 	/** `RIGHT JOIN <source> ON <on>`. */
-	public static macro function RightJoin(self:Expr, source:Expr, on:Expr):Expr {
-		return ExpressionConverter.Join(self, source, on, "Right");
+	public static macro function RightJoin(self:Expr, source:Expr, on:Expr, ?reduce:Expr):Expr {
+		return ExpressionConverter.Join(self, source, on, "Right", reduce);
 	}
 
 	/** `FULL OUTER JOIN <source> ON <on>`. */
-	public static macro function OuterJoin(self:Expr, source:Expr, on:Expr):Expr {
-		return ExpressionConverter.Join(self, source, on, "Outer");
+	public static macro function OuterJoin(self:Expr, source:Expr, on:Expr, ?reduce:Expr):Expr {
+		return ExpressionConverter.Join(self, source, on, "Outer", reduce);
 	}
 
 	/**

@@ -22,6 +22,7 @@ using haxe.macro.TypeTools;
 	on each call. Nothing in it depends on the statement it lands in, so the whole condition is built
 	where it is written — there is no closure.
 **/
+@:allow(codequery.sqlexpressions.ProjectionBuilder)
 class ExpressionConverter {
 	#if macro
 	/**
@@ -160,6 +161,11 @@ class ExpressionConverter {
 
 			case EUnop(OpNot, false, operand):
 				macro codequery.sqlexpressions.Expr.not(${ToSqlExpression(operand, bound, rows)});
+
+			// `cast(x, Int)` is `CAST(x AS INTEGER)` — the one place a Haxe cast has SQL to say.
+			case ECast(inner, type) if (type != null):
+				final target = SqlTypeOf(Context.resolveType(type, e.pos), e.pos);
+				macro codequery.sqlexpressions.Expr.castTo(${ToSqlExpression(inner, bound, rows)}, $target);
 
 			// The calls of `Sql`, which is where what SQL has and Haxe has not is written.
 			case ECall({expr: EField({expr: EConst(CIdent("Sql"))}, name, _)}, args)
@@ -401,14 +407,11 @@ class ExpressionConverter {
 
 		return switch name {
 			case "isIn" | "notIn":
-				final values = switch Unwrap(args[1]).expr {
-					case EArrayDecl(items): {expr: EArrayDecl([for (item in items) ToSqlExpression(item, bound, rows)]),
-							pos: pos};
-					// A list held in a variable: each of its values, read when the statement is built.
-					case _: ValuesOf(args[1]);
-				}
 				final negate = name == "notIn";
-				macro codequery.sqlexpressions.Expr.isIn(${arg(0)}, $values, $v{negate});
+				Membership(args[0], args[1], negate, bound, rows, pos);
+
+			case "inBound" | "notInBound":
+				Membership(args[0], args[1], name == "notInBound", bound, rows, pos, true);
 
 			case "inQuery" | "notInQuery":
 				final negate = name == "notInQuery";
@@ -516,6 +519,153 @@ class ExpressionConverter {
 		}
 		final each = ValuedAs(macro item, element);
 		return macro [for (item in $list) $each];
+	}
+
+	/**
+		`x IN (…)` and its negation, over values written at the call site or a collection the query
+		holds. A collection is read when the statement is built and sent beside it, one parameter a
+		value; values written out are constants in the text.
+
+		NOT IN over a value that may be absent keeps the absent rows: SQL calls the comparison unknown
+		and drops the row, where Haxe calls a null value not one of the set. Same disagreement as `!=`,
+		same answer — the test is written out beside it.
+	**/
+	static function Membership(value:Expr, set:Expr, negate:Bool, bound:Map<String, Int>, rows:Array<Type>, pos:Position,
+			bindValues:Bool = false):Expr {
+		final converted = ToSqlExpression(value, bound, rows);
+		final membership = switch Unwrap(set).expr {
+			case EArrayDecl(items):
+				// A set read off the row is not a set the statement can list.
+				for (item in items) {
+					if (PathOf(item, bound) != null) {
+						return macro(throw "Sql.isIn takes a set the query holds — a collection, values written here, "
+							+ "or another query — and this one is read from the row." : codequery.sqlexpressions.ISqlExpression);
+					}
+				}
+				final values = {expr: EArrayDecl([for (item in items) ToSqlExpression(item, bound, rows)]), pos: pos};
+				macro codequery.sqlexpressions.Expr.isIn($converted, $values, $v{negate});
+
+			case _:
+				// Any collection, not just an array: what matters is that the query holds it. Its
+				// element type is what one step of iterating it answers with.
+				final element = try {
+					Context.typeof(macro $set.iterator().next());
+				} catch (_:Dynamic) {
+					Context.error('Sql.isIn takes the values as a list written out here or a collection held by the query, not ${Context.typeof(set).toString()}',
+						set.pos);
+				}
+				// Written into the statement as C#'s Contains writes it — IN (1, 2, 3) — unless asked
+				// to send the values beside it, as C#'s .In(ids) does.
+				final bind = bindValues ? ParameterisedAs(macro v, element) : ValuedAs(macro v, element);
+				macro {
+					final held = $set;
+					if (held == null) {
+						throw "The set must be a collection that is there — this one is null.";
+					}
+					codequery.sqlexpressions.Expr.isIn($converted, [for (v in held) $bind], $v{negate});
+				}
+		}
+
+		if (negate && IsNullable(value, bound, rows)) {
+			return macro codequery.sqlexpressions.Expr.or($membership,
+				codequery.sqlexpressions.Expr.equal(${ToSqlExpression(value, bound, rows)}, codequery.sqlexpressions.Expr.constNull()));
+		}
+		return membership;
+	}
+
+	/** Whether a column a lambda reaches is declared as one that may be absent. */
+	static function IsNullable(value:Expr, bound:Map<String, Int>, rows:Array<Type>):Bool {
+		final reached = PathOf(value, bound);
+		if (reached == null) {
+			return false;
+		}
+		return switch MemberTypeOf(reached.path, rows[reached.row], value.pos) {
+			case TType(t, _) if (t.get().name == "Null"): true;
+			case TAbstract(t, _) if (t.get().name == "Null"): true;
+			case _: false;
+		}
+	}
+
+	/** The `SqlType` a Haxe type casts to. */
+	static function SqlTypeOf(type:Type, pos:Position):Expr {
+		final name = switch type.followWithAbstracts() {
+			case TAbstract(_.get() => {name: "Int"}, _): "SqlInt";
+			case TAbstract(_.get() => {name: "Float"}, _): "SqlFloat";
+			case TAbstract(_.get() => {name: "Bool"}, _): "SqlBool";
+			case TInst(_.get() => {name: "String"}, _): "SqlText";
+			case TInst(_.get() => {name: "Date"}, _): "SqlTimestamp";
+			case t: Context.error('${t.toString()} is not a type SQL can cast to; use Sql.castTo with a SqlType', pos);
+		}
+		return macro $p{["codequery", "sqlexpressions", "SqlType", name]};
+	}
+
+	/**
+		`Reduce` — folding a joined query back to one row: `(b, u) -> {b: b, u: u}`. The projection is
+		kept in place rather than made into a query of its own, so what follows reads through the
+		row it built while the SQL stays the join it was.
+	**/
+	public static function Reduced(self:Expr, reduce:Expr):Expr {
+		final rows = EntitiesOf(self);
+		final body = switch reduce.expr {
+			case EFunction(_, f): Unwrap(f.expr);
+			case _: Context.error("Expected a reduce, e.g. (b, u) -> {b: b, u: u}", reduce.pos);
+		}
+
+		// A reduce that builds nothing says so — when the query is built, as the C# does, since a
+		// test can catch that and not a compile error.
+		if (!body.expr.match(EObjectDecl(_) | ENew(_, _) | ECast({expr: EObjectDecl(_)}, _) | EConst(CIdent(_)))) {
+			final message = "A reduce builds a row from the sources it joins — reduce: (b, u) -> {b: b, u: u} — and '"
+				+ body.toString() + "' is not a row being built.";
+			return macro(throw $v{message} : Dynamic);
+		}
+
+		final projected = ConvertProjection(reduce, rows);
+		final selection = projected.selection;
+		return Answering(macro(cast $self : codequery.queries.SelectQueryImpl).ReduceTo($selection), [projected.row]);
+	}
+
+	/**
+		`Pivot` — one conditional aggregate per pivot value, `SUM(CASE WHEN forColumn = key THEN value END)`,
+		beside the group-by columns and grouped by them. Portable: no dialect needs a PIVOT clause.
+	**/
+	public static function Pivot(self:Expr, result:Expr, forColumn:Expr, value:Expr, aggregate:Expr, pivots:Expr,
+			groupBy:Null<Expr>):Expr {
+		final rows = EntitiesOf(self);
+		final forExpr = ConvertKey(forColumn, rows);
+		final valueExpr = ConvertKey(value, rows);
+
+		final columns = switch Unwrap(pivots).expr {
+			case EArrayDecl(items):
+				[for (item in items) switch Unwrap(item).expr {
+					case EObjectDecl(fields):
+						var key:Null<Expr> = null;
+						var column:Null<Expr> = null;
+						for (field in fields) {
+							switch field.field {
+								case "key": key = Valued(field.expr);
+								case "column": column = field.expr;
+								case other: Context.error('A pivot names a key and a column, not "$other"', field.expr.pos);
+							}
+						}
+						if (key == null || column == null) {
+							Context.error("A pivot is {key: …, column: …}", item.pos);
+						}
+						macro new codequery.queries.Pivoting.PivotColumn($key, $column);
+					case _: Context.error("A pivot is {key: …, column: …}", item.pos);
+				}];
+			case _: Context.error("The pivots are written out here as a list of {key: …, column: …}", pivots.pos);
+		}
+		final list = {expr: EArrayDecl(columns), pos: pivots.pos};
+
+		final grouped = Omitted(groupBy) ? macro null : ConvertProjection(groupBy, rows).selection;
+		final resultType = Context.getType(switch result.expr {
+			case EConst(CIdent(name)): name;
+			case EField(_, _, _): new Printer().printExpr(result);
+			case _: Context.error("Name the row type the pivot answers with, e.g. .Pivot(RegionPivot, …)", result.pos);
+		});
+		final pivoted = macro codequery.queries.Pivoting.Apply((cast $self : codequery.queries.SelectQueryImpl),
+			$forExpr, $valueExpr, $aggregate, $list, $grouped);
+		return Answering(pivoted, [resultType]);
 	}
 
 	/** The statement behind a query handed to `Sql`. */
@@ -721,45 +871,16 @@ class ExpressionConverter {
 		];
 		final typed = {expr: EFunction(FAnonymous, {args: args, ret: null, expr: fn.expr}), pos: pos};
 		return switch Context.typeof(typed).follow() {
-			case TFun(_, ret): ret;
+			// A value whose type nothing settles — `Sql.castTo`'s `TTo` — is a row of no particular type.
+			case TFun(_, ret): ret.toComplexType() == null ? TDynamic(null) : ret;
 			case t: Context.error('A projection must answer with something; this one is ${t.toString()}', pos);
 		}
 	}
 
 	static function ToProjection(e:Expr, bound:Map<String, Int>, rows:Array<Type>):Expr {
-		return switch e.expr {
-			// A structure names each member; the names are what the columns come back as.
-			case EObjectDecl(fields):
-				final all:Array<Expr> = [];
-				for (field in fields) {
-					for (member in ProjectionMembersOf(field.field, field.expr, bound, rows)) {
-						all.push(member);
-					}
-				}
-				final members = {expr: EArrayDecl(all), pos: e.pos};
-				macro new codequery.sqlexpressions.ProjectionSqlExpression($members);
-
-			// An owned object on its own — `r -> r.baseline` — is the columns it is spread over,
-			// each under its own name, which is what puts it back together on the way in.
-			case EField(_, _, _) if (ObjectLeaves(e, bound, rows) != null):
-				final members = {expr: EArrayDecl(ProjectionMembersOf("", e, bound, rows)), pos: e.pos};
-				macro new codequery.sqlexpressions.ProjectionSqlExpression($members);
-
-			// A row on its own selects that row's columns.
-			case EConst(CIdent(name)) if (bound.exists(name)):
-				final index = bound[name];
-				final source = IsStructure(rows[index])
-					? macro codequery.sqlexpressions.ParameterSqlSource.At($v{index})
-					: ColumnsBuilder.Member(ColumnsBuilder.Of(rows[index], index), "Source");
-				macro new codequery.sqlexpressions.AllColumnsSqlExpression($source);
-
-			// One expression, naming nothing — `a -> a.name`, which C# answers with a query of that
-			// value. There is one column and it needs no name, since nothing reads it by one.
-			case _:
-				final only = ToSqlExpression(e, bound, rows);
-				macro new codequery.sqlexpressions.ProjectionSqlExpression(
-					[new codequery.sqlexpressions.ProjectionMember("", $only)]);
-		}
+		// Flattened by the builder: a whole row or an object built here is its columns, named along
+		// the path that reaches each, and a lone expression is itself.
+		return ProjectionBuilder.Build(e, bound, rows);
 	}
 
 	/**
@@ -1187,7 +1308,7 @@ class ExpressionConverter {
 		A join: the source brings a row, the condition is written over every row the query then has,
 		and which method is called depends on whether the source is a table or another query.
 	**/
-	public static function Join(self:Expr, source:Expr, on:Null<Expr>, joinType:String):Expr {
+	public static function Join(self:Expr, source:Expr, on:Null<Expr>, joinType:String, ?reduce:Expr):Expr {
 		final rows = EntitiesOf(self).concat([EntityOf(source)]);
 		if (rows.length > MaxRows) {
 			Context.error('A query can join up to $MaxRows rows, as in C#; this one would have ${rows.length}',
@@ -1208,7 +1329,9 @@ class ExpressionConverter {
 				: macro $query.JoinQuery($kind, $inner, $condition);
 		}
 
-		return Answering(joined, rows);
+		// A join may fold the rows it now has back into one, as C#'s `reduce:` argument does.
+		final answered = Answering(joined, rows);
+		return Omitted(reduce) ? answered : Reduced(answered, reduce);
 	}
 
 	/** The row a window arrives as. */

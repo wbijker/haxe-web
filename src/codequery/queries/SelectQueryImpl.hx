@@ -12,6 +12,10 @@ import codequery.sqlexpressions.GroupingMode;
 import codequery.sqlexpressions.SetOperationType;
 import codequery.sqlexpressions.UnionSqlExpression;
 import codequery.sqlexpressions.JoinType;
+import codequery.sqlexpressions.ProjectionMember;
+import codequery.sqlexpressions.ProjectionSqlExpression;
+import codequery.sqlexpressions.QuerySqlSource;
+import codequery.sqlexpressions.TableSqlSource;
 import codequery.sqlexpressions.NamedWindowSqlSource;
 import codequery.sqlexpressions.NullsOrdering;
 import codequery.sqlexpressions.OrderByExpression;
@@ -79,6 +83,7 @@ class SelectQueryImpl {
 	}
 
 	public function WhereCondition(condition:ISqlExpression):SelectQueryImpl {
+		final condition = context.Resolve(condition);
 		return Fork(expression -> AndWhere(expression, condition));
 	}
 
@@ -90,6 +95,7 @@ class SelectQueryImpl {
 	}
 
 	public function GroupByKey(key:ISqlExpression, mode:GroupingMode = None):SelectQueryImpl {
+		final key = context.Resolve(key);
 		return Fork(expression -> {
 			expression.GroupBy.push(key);
 			if (mode != None) {
@@ -100,6 +106,7 @@ class SelectQueryImpl {
 
 	/** What `GroupByGroupingSets` compiles down to. */
 	public function GroupBySet(keys:Array<ISqlExpression>):SelectQueryImpl {
+		final keys = keys.map(context.Resolve);
 		return Fork(expression -> expression.GroupingSets.push(keys));
 	}
 
@@ -120,10 +127,16 @@ class SelectQueryImpl {
 
 	/** What the set operations compile down to. */
 	public function UnionWith(type:SetOperationType, other:SelectQueryImpl):SelectQueryImpl {
-		return Fork(expression -> expression.Unions.push(new UnionSqlExpression(type, other.ToExpression())));
+		// Attached to this query's unwrapped body, and a fresh wrapper answered — so whatever is
+		// applied afterwards acts on the combined result, not on the first member, as in C#.
+		final body = ToExpression().Fork();
+		body.Unions.push(new UnionSqlExpression(type, other.ToExpression()));
+		final context = new SourceContext();
+		return new SelectQueryImpl(new SelectExpression(context.AddQuerySource(body)), context);
 	}
 
 	public function HavingCondition(condition:ISqlExpression):SelectQueryImpl {
+		final condition = context.Resolve(condition);
 		return Fork(expression -> expression.Having = expression.Having == null
 			? condition
 			: new BinarySqlExpression(expression.Having, SqlBinaryOperator.And, condition));
@@ -136,6 +149,8 @@ class SelectQueryImpl {
 	**/
 	public function AddWindow(partitionBy:Array<ISqlExpression>, orderBy:Array<OrderByExpression>, ?name:String,
 			?frame:codequery.sqlexpressions.WindowFrame):SelectQueryImpl {
+		final partitionBy = partitionBy.map(context.Resolve);
+		final orderBy = orderBy.map(term -> (cast context.Resolve(term) : OrderByExpression));
 		return Fork(expression -> {
 			final given = name != null ? name : (expression.Windows.length == 0 ? "w" : "w" + expression.Windows.length);
 			expression.Windows.push(new NamedWindowSqlSource(given, partitionBy, orderBy, frame));
@@ -162,7 +177,7 @@ class SelectQueryImpl {
 	public function WhereExistsTable(table:IQueryTable, correlation:ISqlExpression, negate:Bool):SelectQueryImpl {
 		final context = this.context.Fork();
 		final subquery = new SelectExpression(context.AddTableSource(table.Table));
-		subquery.Where = correlation;
+		subquery.Where = context.Resolve(correlation);
 
 		final expression = SelectExpression.Fork();
 		AndWhere(expression, new ExistsSqlExpression(subquery, negate));
@@ -181,6 +196,7 @@ class SelectQueryImpl {
 	}
 
 	public function DistinctOnKey(key:ISqlExpression):SelectQueryImpl {
+		final key = context.Resolve(key);
 		return Fork(expression -> {
 			if (expression.IsDistinct) {
 				throw "A query is DISTINCT or DISTINCT ON, not both";
@@ -190,6 +206,7 @@ class SelectQueryImpl {
 	}
 
 	public function OrderByKey(key:ISqlExpression, ascending:Bool, nulls:NullsOrdering = Default):SelectQueryImpl {
+		final key = context.Resolve(key);
 		return Fork(expression -> expression.OrderBy.push(new OrderByExpression(key, ascending, nulls)));
 	}
 
@@ -220,7 +237,7 @@ class SelectQueryImpl {
 	**/
 	public function SelectProjection(selection:ISqlExpression):SelectQueryImpl {
 		final projected = SelectExpression.Fork();
-		projected.Selection = selection;
+		projected.Selection = context.Resolve(selection);
 
 		final context = new SourceContext();
 		return new SelectQueryImpl(new SelectExpression(context.AddQuerySource(projected)), context);
@@ -228,12 +245,53 @@ class SelectQueryImpl {
 
 	public function JoinTable(type:JoinType, table:IQueryTable, ?on:ISqlExpression):SelectQueryImpl {
 		final context = this.context.Fork();
-		return Joined(type, context.AddTableSource(table.Table), on, context);
+		return Joined(type, context.AddTableSource(table.Table), context.Resolve(on), context);
 	}
 
 	public function JoinQuery(type:JoinType, source:SelectQueryImpl, ?on:ISqlExpression):SelectQueryImpl {
 		final context = this.context.Fork();
-		return Joined(type, context.AddQuerySource(source.ToExpression()), on, context);
+		// A query that only reads a table is that table, and is joined as one rather than nested —
+		// which is how C# renders it.
+		final statement = source.ToExpression();
+		final table = Std.downcast(cast statement.Source, TableSqlSource);
+		if (table != null && statement.IsEmpty) {
+			return Joined(type, context.AddTableSource(table.Table), context.Resolve(on), context);
+		}
+		return Joined(type, context.AddQuerySource(statement), context.Resolve(on), context);
+	}
+
+	/**
+		`Reduce` — the projection kept in place rather than made into a query of its own: the
+		sources stay where they are and keep their aliases, so the SQL is the same join it was, and
+		what follows reads through the row the reduce built. Each member is remembered under its
+		name so that `x.u.name` afterwards finds the column `u` stood for.
+	**/
+	public function ReduceTo(selection:ISqlExpression):SelectQueryImpl {
+		final resolved = context.Resolve(selection);
+		// One whole row — (b, a) -> b — is a row too: every column of that source, as C# takes it.
+		if (Std.downcast(cast resolved, codequery.sqlexpressions.AllColumnsSqlExpression) != null) {
+			final expression = SelectExpression.Fork();
+			expression.Selection = resolved;
+			return new SelectQueryImpl(expression, context.Fork());
+		}
+		final projection = Std.downcast(cast resolved, ProjectionSqlExpression);
+		if (projection == null) {
+			throw "A reduce builds a row from the sources it joins — reduce: (b, u) -> {b: b, u: u} — "
+				+ "and this one is not a row being built.";
+		}
+		if (projection.Members.length == 0) {
+			throw "A reduce projects the joined rows into one: reduce: (b, u) -> {b: b, u: u}.";
+		}
+
+		final expression = SelectExpression.Fork();
+		expression.Selection = projection;
+
+		final reduced = context.Fork();
+		for (member in projection.Members) {
+			reduced.RegisterProjected(member.Name, member.Expression);
+		}
+		reduced.MarkReduced();
+		return new SelectQueryImpl(expression, reduced);
 	}
 
 	function Joined(type:JoinType, source:ISqlSource, on:Null<ISqlExpression>, context:SourceContext):SelectQueryImpl {

@@ -34,6 +34,21 @@ class SchemaDiff {
 			}
 		}
 
+		// A view reads tables, so it is made after them and dropped before them.
+		for (view in to.Views) {
+			final existing = from.View(view.Name);
+			if (existing == null) {
+				changes.push(CreateView(view));
+			} else if (!existing.Matches(view)) {
+				changes.push(AlterView(existing, view));
+			}
+		}
+		for (view in from.Views) {
+			if (to.View(view.Name) == null) {
+				changes.push(DropView(view));
+			}
+		}
+
 		for (table in from.Tables) {
 			if (to.Table(table.Name) == null) {
 				changes.push(DropTable(table));
@@ -51,6 +66,9 @@ class SchemaDiff {
 			case AddColumn(table, column): DropColumn(table, column);
 			case DropColumn(table, column): AddColumn(table, column);
 			case AlterColumn(table, from, to): AlterColumn(table, to, from);
+			case CreateView(view): DropView(view);
+			case DropView(view): CreateView(view);
+			case AlterView(from, to): AlterView(to, from);
 		}
 	}
 }

@@ -751,7 +751,29 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 
 			case AlterColumn(table, _, to):
 				'ALTER TABLE $table ALTER COLUMN ${to.Name} TYPE ${RenderType(to.Type)}';
+
+			// A view changed is put back by the strategy it declares; replaced in place by default.
+			case CreateView(view) | AlterView(_, view):
+				BuildCreateViewSql(view.Name, view.Select, view.Materialized, view.Strategy);
+
+			case DropView(view):
+				BuildDropViewSql(view.Name, view.Materialized);
 		}
+	}
+
+	/**
+		The statement that puts a view in the database, so a changed view is recreated on migration:
+		`CREATE OR REPLACE VIEW`, or a drop and a create when the strategy asks for one. A dialect
+		that spells it differently overrides this.
+	**/
+	public function BuildCreateViewSql(name:String, select:String, materialized:Bool = false,
+			?strategy:codequery.migrations.DbMigrationStrategy):String {
+		return ViewStatements.Create(name, select, materialized, strategy == null ? CreateOrReplace : strategy);
+	}
+
+	/** The `DROP VIEW` that undoes `BuildCreateViewSql`. */
+	public function BuildDropViewSql(name:String, materialized:Bool = false):String {
+		return ViewStatements.Drop(name, materialized);
 	}
 
 	function ColumnDefinition(column:codequery.migrations.DatabaseColumnDefinition):String {
