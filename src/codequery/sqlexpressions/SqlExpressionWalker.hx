@@ -68,6 +68,12 @@ class SqlExpressionWalker {
 		final ordering = Std.downcast(cast e, OrderByExpression);
 		if (ordering != null) return visitor.OnOrderBy(ordering);
 
+		final searching = Std.downcast(cast e, StringOperationExpression);
+		if (searching != null) return visitor.OnStringOperation(searching);
+
+		final row = Std.downcast(cast e, RowSqlExpression);
+		if (row != null) return visitor.OnRow(row);
+
 		throw 'No visitor case for ${Type.getClassName(Type.getClass(e))}';
 	}
 }

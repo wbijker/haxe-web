@@ -45,7 +45,6 @@ class ExpressionConverter {
 
 	static function ConvertLambda(given:Expr, rows:Array<Type>, returns:ComplexType, expected:String):Expr {
 		final lambda = ResolveLambda(given);
-		TypeLambda(lambda, rows, returns);
 
 		final fn = switch lambda.expr {
 			case EFunction(_, f): f;
@@ -61,7 +60,11 @@ class ExpressionConverter {
 		for (index => arg in fn.args) {
 			bound.set(arg.name, index);
 		}
-		return ToSqlExpression(fn.expr, bound, rows);
+
+		// A subquery the body writes has the outer row's columns put in before anything is typed.
+		final body = LambdaCalls.PrepareSubqueries(fn.expr, bound, rows);
+		TypeLambda({expr: EFunction(FAnonymous, {args: fn.args, ret: fn.ret, expr: body}), pos: lambda.pos}, rows, returns);
+		return ToSqlExpression(body, bound, rows);
 	}
 
 	/**
@@ -137,6 +140,10 @@ class ExpressionConverter {
 				if (quantified != null) {
 					return quantified;
 				}
+				final special = LambdaCalls.Binary(op, left, right, bound, rows);
+				if (special != null) {
+					return special;
+				}
 				final factory = FactoryFor(op, e.pos);
 				final l = ToSqlExpression(left, bound, rows);
 				final r = ToSqlExpression(right, bound, rows);
@@ -150,24 +157,33 @@ class ExpressionConverter {
 				macro codequery.sqlexpressions.Expr.caseWhen([$branch], $fallback);
 
 			case EUnop(OpNot, false, operand):
-				macro codequery.sqlexpressions.Expr.not(${ToSqlExpression(operand, bound, rows)});
+				LambdaCalls.Negation(ToSqlExpression(operand, bound, rows));
 
 			// The calls of `Sql`, which is where what SQL has and Haxe has not is written.
 			case ECall({expr: EField({expr: EConst(CIdent("Sql"))}, name, _)}, args)
 				| ECall({expr: EField({expr: EField({expr: EConst(CIdent("codequery"))}, "Sql", _)}, name, _)}, args):
 				SqlCall(name, args, bound, rows, e.pos);
 
+			// `DbCase.When(…).Else(…)` — CASE written out rather than as a ternary.
+			case ECall(_, _) if (LambdaCalls.IsCaseChain(e)):
+				LambdaCalls.CaseChain(e, bound, rows);
+
+			// A method on something in the lambda: a row's string searched, a query asked a
+			// question, a captured list tested — or a call over captured values, which is a value.
+			case ECall({expr: EField(owner, method, _)}, args):
+				final special = LambdaCalls.MethodCall(e, owner, method, args, bound, rows);
+				special != null ? special : Fallback(e);
+
 			case EField(_, _, _):
 				final reached = PathOf(e, bound);
 				if (reached == null) {
 					// Not a column, so the only thing it can be is something with a value already —
-					// an enum abstract's member, most often.
+					// an enum abstract's member, most often, or a value the lambda closed over.
 					final constant = ConstantOf(e);
 					if (constant != null) {
 						return constant;
 					}
-					Context.error('Only a column of a row this lambda is written over, or a constant, can be used here',
-						e.pos);
+					return LambdaCalls.Captured(e);
 				}
 				ColumnFor(rows[reached.row], reached.row, reached.path, e.pos);
 
@@ -194,17 +210,22 @@ class ExpressionConverter {
 				macro ${Factory("constInt")}($v{-Std.parseInt(v)});
 
 			case _:
-				// Already an expression — a lateral's inner query is handed the outer row's
-				// columns this way, since it has no parameter of its own for them.
-				if (IsSqlExpression(e)) {
-					return e;
-				}
-				final constant = ConstantOf(e);
-				if (constant != null) {
-					return constant;
-				}
-				Context.error('Cannot convert to SQL: ${e.toString()}', e.pos);
+				Fallback(e);
 		}
+	}
+
+	/** What is left when the syntax says nothing: an expression already, a constant, or a captured value. */
+	static function Fallback(e:Expr):Expr {
+		// Already an expression — a lateral's inner query is handed the outer row's
+		// columns this way, since it has no parameter of its own for them.
+		if (IsSqlExpression(e)) {
+			return e;
+		}
+		final constant = ConstantOf(e);
+		if (constant != null) {
+			return constant;
+		}
+		return LambdaCalls.Captured(e);
 	}
 
 	/**
@@ -315,20 +336,47 @@ class ExpressionConverter {
 	**/
 	static function Quantified(op:Binop, left:Expr, right:Expr, bound:Map<String, Int>, rows:Array<Type>,
 			pos:Position):Null<Expr> {
-		final quantifier = switch Unwrap(right).expr {
-			case ECall({expr: EField({expr: EConst(CIdent("Sql"))}, name, _)}, [query]) if (name == "any" || name == "all"):
-				{name: name == "any" ? "Any" : "All", query: query};
-			case _: null;
+		// The quantifier is always the right-hand side; written on the left, the operator turns
+		// round with it: `Sql.all(q) < x` is `x > ALL (q)`.
+		var quantifier = QuantifierOf(right);
+		var value = left;
+		var comparison = op;
+		if (quantifier == null) {
+			quantifier = QuantifierOf(left);
+			value = right;
+			comparison = Flipped(op);
 		}
 		if (quantifier == null) {
 			return null;
 		}
 
-		final comparison = OperatorFor(op, pos);
+		final comparator = OperatorFor(comparison, pos);
 		final name = quantifier.name;
 		final subquery = Statement(quantifier.query);
-		return macro codequery.sqlexpressions.Expr.quantified(${ToSqlExpression(left, bound, rows)}, $comparison,
+		return macro codequery.sqlexpressions.Expr.quantified(${ToSqlExpression(value, bound, rows)}, $comparator,
 			$p{["codequery", "sqlexpressions", "Quantifier", name]}, $subquery);
+	}
+
+	/** `Sql.any(q)`, `Sql.all(q)` or `Sql.some(q)` — a synonym for any — and the query it quantifies. */
+	static function QuantifierOf(e:Expr):Null<{name:String, query:Expr}> {
+		return switch Unwrap(e).expr {
+			case ECall({expr: EField({expr: EConst(CIdent("Sql"))}, name, _)}, [query])
+				| ECall({expr: EField({expr: EField({expr: EConst(CIdent("codequery"))}, "Sql", _)}, name, _)}, [query])
+				if (name == "any" || name == "all" || name == "some"):
+				{name: name == "all" ? "All" : "Any", query: query};
+			case _: null;
+		}
+	}
+
+	/** The operator with its sides swapped: `<` becomes `>`, `<=` becomes `>=`, and equality stays. */
+	static function Flipped(op:Binop):Binop {
+		return switch op {
+			case OpLt: OpGt;
+			case OpLte: OpGte;
+			case OpGt: OpLt;
+			case OpGte: OpLte;
+			case _: op;
+		}
 	}
 
 	/** The `SqlBinaryOperator` an operator maps to, which a quantified comparison needs by name. */
@@ -357,18 +405,28 @@ class ExpressionConverter {
 
 		return switch name {
 			case "isIn" | "notIn":
+				final negate = name == "notIn";
 				final values = switch Unwrap(args[1]).expr {
 					case EArrayDecl(items): {expr: EArrayDecl([for (item in items) ToSqlExpression(item, bound, rows)]),
 							pos: pos};
-					case _: Context.error("Sql." + name + " takes the values as a list written out here", args[1].pos);
+					// A list the lambda holds rather than writes: its values are read when the query is built.
+					case _: return LambdaCalls.InCapturedList(args[0], args[1], negate, bound, rows);
 				}
-				final negate = name == "notIn";
 				macro codequery.sqlexpressions.Expr.isIn(${arg(0)}, $values, $v{negate});
+
+			case "exists" | "notExists":
+				final negate = name == "notExists";
+				macro codequery.sqlexpressions.Expr.exists(${Statement(args[0])}, $v{negate});
+
+			case "row":
+				macro codequery.sqlexpressions.Expr.row(${list(0)});
+
+			case "likeAll":
+				LambdaCalls.LikeAll(args[0], args[1], bound, rows, pos);
 
 			case "inQuery" | "notInQuery":
 				final negate = name == "notInQuery";
-				final subquery = macro(cast ${args[1]} : codequery.queries.SelectQueryImpl).ToExpression();
-				macro codequery.sqlexpressions.Expr.inQuery(${arg(0)}, $subquery, $v{negate});
+				macro codequery.sqlexpressions.Expr.inQuery(${arg(0)}, ${Statement(args[1])}, $v{negate});
 
 			case "between" | "notBetween":
 				final negate = name == "notBetween";
@@ -376,7 +434,11 @@ class ExpressionConverter {
 
 			case "like" | "notLike" | "ilike" | "notIlike":
 				final matching = StringTools.endsWith(name.toLowerCase(), "ilike") ? "ILIKE" : "LIKE";
-				final comparison = macro codequery.sqlexpressions.Expr.infix($v{matching}, ${list(0)});
+				// The escape character is stated rather than assumed: `x LIKE p ESCAPE e`.
+				final pattern = args.length > 2
+					? macro codequery.sqlexpressions.Expr.infix("ESCAPE", [${arg(1)}, ${arg(2)}])
+					: arg(1);
+				final comparison = macro codequery.sqlexpressions.Expr.infix($v{matching}, [${arg(0)}, $pattern]);
 				StringTools.startsWith(name, "not") ? macro codequery.sqlexpressions.Expr.not($comparison) : comparison;
 
 			case "isDistinctFrom" | "isNotDistinctFrom":
@@ -428,9 +490,9 @@ class ExpressionConverter {
 		}
 	}
 
-	/** The statement behind a query handed to `Sql`. */
+	/** The statement behind a query handed to `Sql`, as it stands inside another. */
 	static function Statement(query:Expr):Expr {
-		return macro(cast $query : codequery.queries.SelectQueryImpl).ToExpression();
+		return macro codequery.queries.Subquery.Of((cast $query : codequery.queries.SelectQueryImpl));
 	}
 
 	/** `INTERVAL 'n unit'`, which is a literal of its own rather than a function of two values. */
@@ -605,10 +667,13 @@ class ExpressionConverter {
 			bound.set(arg.name, index);
 		}
 
+		// A subquery the projection writes has the outer row's columns put in before it is typed.
+		final body = LambdaCalls.PrepareSubqueries(Unwrap(fn.expr), bound, rows);
+
 		// Typed first, and deliberately: the walk below only reads syntax, so if it ran first an
 		// editor would get nothing back from inside the projection. Typing is what answers that.
-		final row = ProjectedRow(fn, rows, projection.pos);
-		return {selection: ToProjection(Unwrap(fn.expr), bound, rows), row: row};
+		final row = ProjectedRow({args: fn.args, ret: fn.ret, expr: {expr: EReturn(body), pos: body.pos}}, rows, projection.pos);
+		return {selection: ToProjection(body, bound, rows), row: row};
 	}
 
 	/**
@@ -687,8 +752,15 @@ class ExpressionConverter {
 
 		final members = switch Unwrap(fn.expr).expr {
 			case EObjectDecl(fields): fields;
-			case e: Context.error('An aggregate projection is a structure, not ${Unwrap(fn.expr).toString()}',
-					projection.pos);
+			// One aggregate, naming nothing — `a -> a.sum(o -> o.total)`, which C# answers with a
+			// query of that value. There is one column and it needs no name.
+			case _:
+				final only = ToAggregate(Unwrap(fn.expr), fn.args[0].name, named, rows, query);
+				return {
+					selection: macro new codequery.sqlexpressions.ProjectionSqlExpression(
+						[new codequery.sqlexpressions.ProjectionMember("", $only)]),
+					row: AggregatedValue(ProjectedRow(fn, AggregationRows(rows), projection.pos))
+				};
 		}
 
 		final built = {
@@ -705,6 +777,14 @@ class ExpressionConverter {
 			selection: macro new codequery.sqlexpressions.ProjectionSqlExpression($built),
 			row: ProjectedRow(fn, AggregationRows(rows), projection.pos)
 		};
+	}
+
+	/** The value an aggregate stands for: `Aggregate<Row, Float>` is a Float where it is read. */
+	static function AggregatedValue(type:Type):Type {
+		return switch type.follow() {
+			case TAbstract(_.get() => {name: "Aggregate"}, [_, value]): value;
+			case _: type;
+		}
 	}
 
 	/** The parameter types an aggregate projection is typed against. */

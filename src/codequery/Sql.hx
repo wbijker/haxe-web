@@ -18,10 +18,19 @@ extern class Sql {
 	public static function notIn<T>(value:T, values:Array<T>):Bool;
 
 	/** `x IN (<query>)` — the query selects the one column the value is looked for in. */
-	public static function inQuery<T, TQuery>(value:T, query:TQuery):Bool;
+	public static function inQuery<T>(value:T, query:codequery.queries.ISelectQuery<T>):Bool;
 
 	/** `x NOT IN (<query>)`. */
-	public static function notInQuery<T, TQuery>(value:T, query:TQuery):Bool;
+	public static function notInQuery<T>(value:T, query:codequery.queries.ISelectQuery<T>):Bool;
+
+	/**
+		`EXISTS (<query>)` — as a condition, so it can be OR-ed with another. The query may name the
+		rows of the statement it sits in, which is what makes it correlated.
+	**/
+	public static function exists<TQuery>(query:TQuery):Bool;
+
+	/** `NOT EXISTS (<query>)`. */
+	public static function notExists<TQuery>(query:TQuery):Bool;
 
 	/** `x BETWEEN lower AND upper`, inclusive at both ends. */
 	public static function between<T>(value:T, lower:T, upper:T):Bool;
@@ -29,17 +38,26 @@ extern class Sql {
 	/** `x NOT BETWEEN lower AND upper`. */
 	public static function notBetween<T>(value:T, lower:T, upper:T):Bool;
 
-	/** `x LIKE pattern` — `%` for any run of characters, `_` for one. */
-	public static function like(value:String, pattern:String):Bool;
+	/**
+		`x LIKE pattern` — `%` for any run of characters, `_` for one. With `escape`, the character
+		that makes the next one literal: `LIKE pattern ESCAPE escape`.
+	**/
+	public static function like(value:String, pattern:String, ?escape:String):Bool;
 
 	/** `x NOT LIKE pattern`. */
-	public static function notLike(value:String, pattern:String):Bool;
+	public static function notLike(value:String, pattern:String, ?escape:String):Bool;
 
 	/** `x ILIKE pattern` — `LIKE`, ignoring case. */
-	public static function ilike(value:String, pattern:String):Bool;
+	public static function ilike(value:String, pattern:String, ?escape:String):Bool;
 
 	/** `x NOT ILIKE pattern`. */
-	public static function notIlike(value:String, pattern:String):Bool;
+	public static function notIlike(value:String, pattern:String, ?escape:String):Bool;
+
+	/**
+		`term` searched for in every column of the row but its key — `LIKE '%term%'` on each, OR-ed.
+		A column that is not text is cast to text first.
+	**/
+	public static function likeAll<T>(row:T, term:String):Bool;
 
 	/**
 		`a IS DISTINCT FROM b` — two nulls are the same and one null is a difference, where `==`
@@ -49,6 +67,9 @@ extern class Sql {
 
 	/** `a IS NOT DISTINCT FROM b`. */
 	public static function isNotDistinctFrom<T>(left:T, right:T):Bool;
+
+	/** `(a, b, …)` — several values compared as one row, which is what IS DISTINCT FROM has a row form for. */
+	public static function row(values:haxe.extern.Rest<Dynamic>):Dynamic;
 
 	/** `COALESCE(a, b, …)` — the first that is not null. */
 	public static function coalesce<T>(first:T, rest:haxe.extern.Rest<T>):T;
@@ -93,16 +114,19 @@ extern class Sql {
 	public static function param<T>(value:T):T;
 
 	/** A subquery standing where a value does — one row of one column. */
-	public static function scalar<T, TQuery>(query:TQuery):T;
+	public static function scalar<T>(query:codequery.queries.ISelectQuery<T>):T;
 
 	/** A subquery that may name the rows of the statement it sits in. */
-	public static function correlated<T, TQuery>(query:TQuery):T;
+	public static function correlated<T>(query:codequery.queries.ISelectQuery<T>):T;
 
 	/** `x <op> ANY (<query>)` — true where it holds for one row of the query. */
-	public static function any<T, TQuery>(query:TQuery):T;
+	public static function any<T>(query:codequery.queries.ISelectQuery<T>):T;
+
+	/** `x <op> SOME (<query>)` — a synonym for `any`. */
+	public static function some<T>(query:codequery.queries.ISelectQuery<T>):T;
 
 	/** `x <op> ALL (<query>)` — true where it holds for every row. */
-	public static function all<T, TQuery>(query:TQuery):T;
+	public static function all<T>(query:codequery.queries.ISelectQuery<T>):T;
 
 	/** `EXTRACT(<part> FROM x)` — `year`, `month`, `day`, `hour`, `dow` and the rest. */
 	public static function datePart(part:String, value:Date):Int;

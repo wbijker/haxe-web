@@ -29,4 +29,6 @@ interface ISqlExpressionVisitor<T> {
 	function OnQuantified(e:QuantifiedComparisonSqlExpression):T;
 	function OnWindowFunction(e:WindowFunctionExpression):T;
 	function OnOrderBy(e:OrderByExpression):T;
+	function OnStringOperation(e:StringOperationExpression):T;
+	function OnRow(e:RowSqlExpression):T;
 }

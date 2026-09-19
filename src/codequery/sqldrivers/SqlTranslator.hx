@@ -42,6 +42,10 @@ import codequery.sqlexpressions.SelectExpression;
 import codequery.sqlexpressions.SqlBinaryOperator;
 import codequery.sqlexpressions.SqlConstValue;
 import codequery.sqlexpressions.TableSqlSource;
+import codequery.sqlexpressions.StringOperationExpression;
+import codequery.sqlexpressions.RowSqlExpression;
+import codequery.sqlexpressions.Expr;
+import codequery.queries.Subquery;
 
 /**
 	Renders a statement as SQL — the dialect, and nothing about where the SQL goes.
@@ -79,6 +83,12 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 
 	/** What was sent beside the last statement rendered. */
 	public var Parameters(default, null):Array<SqlConstValue> = [];
+
+	/**
+		Whether a value bound to the statement is written into it instead — escaped, as a literal
+		is. What a view body, a migration file or a log line needs: nothing there can bind one.
+	**/
+	public var InlineValues:Bool = false;
 
 	public function new() {}
 
@@ -199,14 +209,33 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 		var sql = 'INSERT INTO ${target.Table} ($columns)';
 
 		if (insert.FromSelect != null) {
-			sql += ' ${Against(insert.FromSelect.AllSources(), () -> Statement(insert.FromSelect))}';
+			sql += ' ${Nested(insert.FromSelect)}';
 		} else {
-			final rows = insert.Values.map(row -> '(${row.map(RenderExpression).join(", ")})').join(", ");
+			final rows = insert.Values.map(row -> '(${row.map(value -> InsertValue(insert, value)).join(", ")})').join(", ");
 			sql += ' VALUES $rows';
 		}
 		sql += Overriding(insert.Overriding);
 		sql += Conflict(insert);
 		return sql + Returning(insert.Returning);
+	}
+
+	/**
+		One value of an insert, as its strategy says: sent beside the statement, where a value
+		written into the row list is bound after all; or written in, where a bound one is inlined.
+	**/
+	function InsertValue(insert:InsertExpression, value:ISqlExpression):String {
+		return switch insert.Strategy.ValueMode {
+			case Parameterized:
+				final constant = Std.downcast(cast value, ConstSqlExpression);
+				constant != null && !constant.Value.match(SqlConstNull)
+					? OnParameter(Expr.param(constant.Value))
+					: RenderExpression(value);
+			case Inline:
+				final parameter = Std.downcast(cast value, SqlParameterExpression);
+				parameter != null ? RenderConst(parameter.Value) : RenderExpression(value);
+			case BinaryCopy:
+				RenderExpression(value);
+		}
 	}
 
 	function Overriding(mode:codequery.sqlexpressions.IdentityOverride):String {
@@ -238,7 +267,32 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 	}
 
 	function ToSelectSql(expression:SelectExpression):String {
-		return Against(expression.AllSources(), () -> Statement(expression));
+		return Nested(expression);
+	}
+
+	/**
+		A statement rendered against its own sources, wherever it stands — on its own, or inside
+		another. A bare projection wrapper says nothing and is taken off first, so
+		`SELECT * FROM (SELECT …) AS t` is `SELECT …`.
+	**/
+	function Nested(expression:SelectExpression):String {
+		final statement = Subquery.Unwrapped(expression);
+		return Against(statement.AllSources(), () -> Statement(statement));
+	}
+
+	/**
+		The statement a projection wrapper wraps, rendered with the wrapper out of the way.
+
+		The wrapper is not a statement anyone wrote a lambda over: a column the projected statement
+		reads from further out counts statements from where its lambda was written, and the wrapper
+		was put around it afterwards. So the wrapper's frame is lifted off while what it wraps is
+		rendered, and put back after.
+	**/
+	function Projected(query:QuerySqlSource):String {
+		final wrapper = scopes.pop();
+		final sql = Nested(query.Query);
+		scopes.push(wrapper);
+		return sql;
 	}
 
 	/** The statement itself, rendered against whichever sources are in scope. */
@@ -248,7 +302,7 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 		if (expression.With.length > 0) {
 			final recursive = expression.With.filter(cte -> cte.Recursive).length > 0 ? "RECURSIVE " : "";
 			final named = expression.With
-				.map(cte -> '${cte.Name} AS (${Against(cte.Query.AllSources(), () -> Statement(cte.Query))})')
+				.map(cte -> '${cte.Name} AS (${Nested(cte.Query)})')
 				.join(", ");
 			sql += 'WITH $recursive$named ';
 		}
@@ -295,7 +349,7 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 				case Except: "EXCEPT";
 				case ExceptAll: "EXCEPT ALL";
 			}
-			sql += ' $keyword ${Against(union.Query.AllSources(), () -> Statement(union.Query))}';
+			sql += ' $keyword ${Nested(union.Query)}';
 		}
 		return sql;
 	}
@@ -322,13 +376,21 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 
 		final query = Std.downcast(cast source, QuerySqlSource);
 		if (query != null) {
-			return '(${Against(query.Query.AllSources(), () -> Statement(query.Query))}) AS ${Named(query)}';
+			return '(${query.Projected ? Projected(query) : Nested(query.Query)}) AS ${Named(query)}';
 		}
 
 		throw 'Cannot render a source of ${Type.getClassName(Type.getClass(source))}';
 	}
 
 	function Join(join:JoinSqlExpression):String {
+		// A lateral over a plain table names nothing of the row it is joined to, so it is the
+		// ordinary join it amounts to, and the word is dropped.
+		final plain = PlainLateral(join);
+		if (plain != null) {
+			final table = '${plain.Table} AS ${Named(join.Source)}';
+			return join.Type == LeftLateral ? 'LEFT JOIN $table ON TRUE' : 'CROSS JOIN $table';
+		}
+
 		final sql = '${JoinKeyword(join.Type)} ${Source(join.Source)}';
 		if (join.On != null) {
 			return '$sql ON ${RenderExpression(join.On)}';
@@ -336,6 +398,19 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 		// A left join needs a condition even where the correlation is inside the query, and TRUE is
 		// the one that keeps every outer row.
 		return join.Type == LeftLateral ? '$sql ON TRUE' : sql;
+	}
+
+	/** The table a lateral join is over, where its query is that table and nothing more. */
+	function PlainLateral(join:JoinSqlExpression):Null<TableSqlSource> {
+		if (join.Type != CrossLateral && join.Type != LeftLateral) {
+			return null;
+		}
+		final query = Std.downcast(cast join.Source, QuerySqlSource);
+		if (query == null) {
+			return null;
+		}
+		final statement = Subquery.Unwrapped(query.Query);
+		return Subquery.IsPlain(statement) ? Std.downcast(cast statement.Source, TableSqlSource) : null;
 	}
 
 	function JoinKeyword(type:JoinType):String {
@@ -425,6 +500,9 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 	}
 
 	public function OnParameter(e:SqlParameterExpression):String {
+		if (InlineValues) {
+			return RenderConst(e.Value);
+		}
 		parameters.push(e.Value);
 		e.Ordinal = parameters.length;
 		return Placeholder(e.Ordinal);
@@ -456,7 +534,7 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 		// Not correlated: the subquery stands on its own sources, so the outer ones are out of
 		// scope inside it — unlike EXISTS, whose whole point is to reach them.
 		final of = e.Subquery != null
-			? Against(e.Subquery.AllSources(), () -> Statement(e.Subquery))
+			? Nested(e.Subquery)
 			: e.Values.map(RenderExpression).join(", ");
 		return '${RenderExpression(e.Value)} $keyword ($of)';
 	}
@@ -472,7 +550,7 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 	}
 
 	public function OnCase(e:CaseSqlExpression):String {
-		var sql = "CASE";
+		var sql = e.Operand == null ? "CASE" : 'CASE ${RenderExpression(e.Operand)}';
 		for (branch in e.Branches) {
 			sql += ' WHEN ${RenderExpression(branch.When)} THEN ${RenderExpression(branch.Then)}';
 		}
@@ -512,9 +590,12 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 	}
 
 	public function OnScalarSubquery(e:ScalarSubquerySqlExpression):String {
-		return e.Correlated
-			? '(${Correlated(e.Subquery)})'
-			: '(${Against(e.Subquery.AllSources(), () -> Statement(e.Subquery))})';
+		// A place that takes one value says so, rather than letting the database refuse the statement.
+		if (Subquery.Unwrapped(e.Subquery).Selection == null) {
+			throw "A scalar subquery takes one value from each row, and this one selects the whole row. "
+				+ "Select the value wanted, or gather the rows with ToList().";
+		}
+		return '(${Correlated(e.Subquery)})';
 	}
 
 	public function OnQuantified(e:QuantifiedComparisonSqlExpression):String {
@@ -522,8 +603,39 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 			case Any: "ANY";
 			case All: "ALL";
 		}
-		final of = Against(e.Subquery.AllSources(), () -> Statement(e.Subquery));
-		return '${RenderExpression(e.Value)} ${RenderOperator(e.Operator)} $quantifier ($of)';
+		return '${RenderExpression(e.Value)} ${RenderOperator(e.Operator)} $quantifier (${Nested(e.Subquery)})';
+	}
+
+	public function OnStringOperation(e:StringOperationExpression):String {
+		final operand = RenderExpression(e.Operand);
+
+		// A term written into the lambda is a literal the wildcards can be written into.
+		final constant = Std.downcast(cast e.Pattern, ConstSqlExpression);
+		final literal = constant == null ? null : switch constant.Value {
+			case SqlConstString(s): s;
+			case _: null;
+		}
+		if (literal != null) {
+			final pattern = switch e.Type {
+				case Contains: '%$literal%';
+				case StartsWith: '$literal%';
+				case EndsWith: '%$literal';
+			}
+			return '$operand LIKE ${RenderConst(SqlConstString(pattern))}';
+		}
+
+		// A bound term, or another column, is not: the wildcards are concatenated around it.
+		final term = RenderExpression(e.Pattern);
+		final pattern = switch e.Type {
+			case Contains: "'%' || " + term + " || '%'";
+			case StartsWith: term + " || '%'";
+			case EndsWith: "'%' || " + term;
+		}
+		return '$operand LIKE ($pattern)';
+	}
+
+	public function OnRow(e:RowSqlExpression):String {
+		return '(${e.Values.map(RenderExpression).join(", ")})';
 	}
 
 	public function OnWindowFunction(e:WindowFunctionExpression):String {
@@ -630,15 +742,12 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 	}
 
 	/**
-		A subquery that can name the outer statement's rows, so its sources are added to what is in
-		scope rather than replacing it.
+		A subquery that may name the outer statement's rows. It renders against its own sources like
+		any other: a column it reads from outside says how many statements out it is, and the
+		statements enclosing this one are kept beneath it for that.
 	**/
 	function Correlated(subquery:SelectExpression):String {
-		final outer = sources;
-		sources = sources.concat(subquery.AllSources());
-		final sql = Statement(subquery);
-		sources = outer;
-		return sql;
+		return Nested(subquery);
 	}
 
 	function RenderAggregate(aggregate:AggregateSqlExpression):String {

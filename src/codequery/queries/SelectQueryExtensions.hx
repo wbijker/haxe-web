@@ -62,13 +62,86 @@ class SelectQueryExtensions {
 	/** At most `count` rows. */
 	public static macro function Limit(self:Expr, count:Expr):Expr {
 		final rows = ExpressionConverter.EntitiesOf(self);
+		codequery.sqlexpressions.LambdaCalls.RefuseOuterValue(count);
 		return ExpressionConverter.Answering(macro ${Impl(self)}.LimitRows($count), rows);
 	}
 
 	/** Skips `count` rows. */
 	public static macro function Offset(self:Expr, count:Expr):Expr {
 		final rows = ExpressionConverter.EntitiesOf(self);
+		codequery.sqlexpressions.LambdaCalls.RefuseOuterValue(count);
 		return ExpressionConverter.Answering(macro ${Impl(self)}.OffsetRows($count), rows);
+	}
+
+	/**
+		A clause only sometimes wanted, said in the chain rather than by taking it apart:
+		`.Conditional(term != null, q -> q.Where(p -> p.name == term))`. With a second lambda, one
+		or the other is applied.
+	**/
+	public static macro function Conditional(self:Expr, condition:Expr, then:Expr, ?otherwise:Expr):Expr {
+		return codequery.sqlexpressions.LambdaCalls.Conditional(self, condition, then, otherwise);
+	}
+
+	// ---- questions asked of a query inside another query's lambda ------------------------------------
+	//
+	// `Where(c -> db.Orders.From().Where(o -> o.customerId == c.id).Any())`: each of these is read while
+	// the lambda around it is converted and becomes the SQL that asks the question — EXISTS, IN, an
+	// aggregate, a subquery. Called outside a lambda there is no row to ask about, and each says so.
+
+	/** `EXISTS (…)` — whether the query has a row, or a row the predicate holds for. */
+	public static macro function Any(self:Expr, ?predicate:Expr):Expr {
+		return codequery.sqlexpressions.LambdaCalls.Operation(self, "Any",
+			ExpressionConverter.Omitted(predicate) ? [] : [predicate]);
+	}
+
+	/** `NOT EXISTS (… WHERE NOT …)` — whether the predicate holds for every row. */
+	public static macro function All(self:Expr, predicate:Expr):Expr {
+		return codequery.sqlexpressions.LambdaCalls.Operation(self, "All", [predicate]);
+	}
+
+	/** `value IN (…)` — whether the query's one column has the value. */
+	public static macro function Contains(self:Expr, value:Expr):Expr {
+		return codequery.sqlexpressions.LambdaCalls.Operation(self, "Contains", [value]);
+	}
+
+	/** `(SELECT SUM(…) …)`. */
+	public static macro function Sum(self:Expr, selector:Expr):Expr {
+		return codequery.sqlexpressions.LambdaCalls.Operation(self, "Sum", [selector]);
+	}
+
+	/** `(SELECT MAX(…) …)`. */
+	public static macro function Max(self:Expr, selector:Expr):Expr {
+		return codequery.sqlexpressions.LambdaCalls.Operation(self, "Max", [selector]);
+	}
+
+	/** `(SELECT MIN(…) …)`. */
+	public static macro function Min(self:Expr, selector:Expr):Expr {
+		return codequery.sqlexpressions.LambdaCalls.Operation(self, "Min", [selector]);
+	}
+
+	/** `(SELECT AVG(…) …)`. */
+	public static macro function Avg(self:Expr, selector:Expr):Expr {
+		return codequery.sqlexpressions.LambdaCalls.Operation(self, "Avg", [selector]);
+	}
+
+	/** `(… LIMIT 1)` — the one value of the first row, or null where there is none. */
+	public static macro function FirstOrDefault(self:Expr):Expr {
+		return codequery.sqlexpressions.LambdaCalls.Operation(self, "FirstOrDefault", []);
+	}
+
+	/** `(… LIMIT 1)`, as `FirstOrDefault`. */
+	public static macro function FetchFirst(self:Expr):Expr {
+		return codequery.sqlexpressions.LambdaCalls.Operation(self, "FetchFirst", []);
+	}
+
+	/** `(… LIMIT 1)`, as `FirstOrDefault`. */
+	public static macro function FetchFirstOrDefault(self:Expr):Expr {
+		return codequery.sqlexpressions.LambdaCalls.Operation(self, "FetchFirstOrDefault", []);
+	}
+
+	/** The rows gathered into one value — JSON, which this port does not have. */
+	public static macro function ToList(self:Expr):Expr {
+		return codequery.sqlexpressions.LambdaCalls.Operation(self, "ToList", []);
 	}
 
 	/** Keeps the rows tying with the last one the limit allows. */
@@ -311,9 +384,9 @@ class SelectQueryExtensions {
 
 	static function Existing(self:Expr, table:Expr, correlation:Expr, negate:Bool):Expr {
 		final rows = ExpressionConverter.EntitiesOf(self);
-		// The correlation names the table's rows after the query's own, so the subquery's source is
-		// one past them.
-		final condition = ExpressionConverter.Convert(correlation, rows.concat([ExpressionConverter.EntityOf(table)]));
+		// The correlation names the query's rows and then the table's; inside the subquery the
+		// table is its own row and the query's are the statement outside.
+		final condition = codequery.sqlexpressions.LambdaCalls.Correlation(correlation, rows, ExpressionConverter.EntityOf(table));
 		return ExpressionConverter.Answering(macro ${Impl(self)}.WhereExistsTable($table, $condition, $v{negate}), rows);
 	}
 
