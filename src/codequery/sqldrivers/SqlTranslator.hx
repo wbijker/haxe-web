@@ -117,6 +117,12 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 			return Against(insert.AllSources(), () -> InsertSql(insert));
 		}
 
+		// A migration's SQL is written rather than built, and goes through as it stands.
+		final raw = Std.downcast(cast statement, codequery.migrations.RawStatement);
+		if (raw != null) {
+			return raw.Sql;
+		}
+
 		throw 'Cannot render ${Type.getClassName(Type.getClass(statement))}';
 	}
 
@@ -572,7 +578,43 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 		}
 	}
 
-	function RenderType(type:SqlType):String {
+	/**
+		One schema change as the DDL that makes it.
+
+		A dialect that spells a type or an ALTER differently overrides this or `RenderType`; nothing
+		about a change itself is dialect-specific, which is why the change is data and this is not.
+	**/
+	public function ToDdl(change:codequery.migrations.SchemaChange):String {
+		return switch change {
+			case CreateTable(table):
+				final columns = table.Columns.map(ColumnDefinition).join(", ");
+				'CREATE TABLE ${table.Name} ($columns)';
+
+			case DropTable(table):
+				'DROP TABLE ${table.Name}';
+
+			case AddColumn(table, column):
+				'ALTER TABLE $table ADD COLUMN ${ColumnDefinition(column)}';
+
+			case DropColumn(table, column):
+				'ALTER TABLE $table DROP COLUMN ${column.Name}';
+
+			case AlterColumn(table, _, to):
+				'ALTER TABLE $table ALTER COLUMN ${to.Name} TYPE ${RenderType(to.Type)}';
+		}
+	}
+
+	function ColumnDefinition(column:codequery.migrations.DatabaseColumnDefinition):String {
+		var sql = '${column.Name} ${RenderType(column.Type)}';
+		if (column.PrimaryKey) {
+			sql += " PRIMARY KEY";
+		} else if (!column.Nullable) {
+			sql += " NOT NULL";
+		}
+		return sql;
+	}
+
+	public function RenderType(type:SqlType):String {
 		return switch type {
 			case SqlInt: "INTEGER";
 			case SqlBigInt: "BIGINT";

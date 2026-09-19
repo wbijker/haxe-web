@@ -56,6 +56,18 @@ types against this port. Worked in batches of ten, top down.
 - [x] 43. `DbView`
 - [x] 44. Insert strategy and identity override
 
+## Schema and migrations
+
+- [x] Read the schema off the entities while compiling (`SchemaBuilder`)
+- [x] Snapshot it as YAML, and read one back (`SchemaSnapshot`, `Yaml`)
+- [x] Diff two schemas into changes, each knowing its reverse (`SchemaDiff`)
+- [x] Render a change as DDL, on the translator so a dialect can differ
+- [x] Scaffold a migration — `AddMigrationIfSchemaChanged`, writing up.sql, down.sql, snapshot.yml
+- [x] Apply and roll back — `PendingMigrations`, `RunPendingMigrations`, `Rollback`
+- [ ] Indexes, foreign keys, checks and defaults in the schema
+- [ ] Routines — `DbFunction`, `DbStoredProc` — and views, as objects a migration creates
+- [ ] A prompt for what a diff cannot decide alone, such as a rename
+
 ## Execution
 
 - [x] 45. A driver that runs what it renders — `ISqlTranslator` renders, `ISqlDriver` adds

@@ -18,4 +18,7 @@ interface ISqlTranslator {
 
 	/** How a value sent beside the statement is written into it. */
 	function Placeholder(ordinal:Int):String;
+
+	/** One schema change as the DDL that makes it. */
+	function ToDdl(change:codequery.migrations.SchemaChange):String;
 }

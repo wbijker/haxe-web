@@ -19,3 +19,11 @@
 --main RunPhp
 --php bin/php-runtime
 --cmd php bin/php-runtime/index.php
+
+--next
+
+# The schema, end to end: scaffolded, written, applied, used, undone.
+--class-path src
+--main RunMigrations
+--php bin/php-migrations
+--cmd php bin/php-migrations/index.php bin/migrations

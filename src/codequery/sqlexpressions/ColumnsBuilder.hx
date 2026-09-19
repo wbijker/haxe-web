@@ -110,7 +110,7 @@ class ColumnsBuilder {
 			final nested = ObjectColumn(field.type);
 			if (nested == null) {
 				final column = member.concat([ColumnNameOf(field)]).join(Separator);
-				final columnType = SqlTypeOf(field);
+				final columnType = SqlTypeOfField(field);
 				LazyStatic(into, member.concat([field.name]).join(Separator),
 					macro :codequery.sqlexpressions.ColumnSqlExpression,
 					macro new codequery.sqlexpressions.ColumnSqlExpression($source, $v{column}, $columnType),
@@ -130,7 +130,7 @@ class ColumnsBuilder {
 		What a column holds, read from the field's type — and from `@columnMaxLength`, which is what
 		separates a bounded string from an unbounded one.
 	**/
-	static function SqlTypeOf(field:ClassField):Expr {
+	public static function SqlTypeOfField(field:ClassField):Expr {
 		final bounded = switch field.meta.extract("columnMaxLength") {
 			case [{params: [{expr: EConst(CInt(v, _))}]}]: Std.parseInt(v);
 			case _: null;
