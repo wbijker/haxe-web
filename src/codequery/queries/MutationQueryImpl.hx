@@ -5,6 +5,7 @@ import codequery.sqlexpressions.ColumnSqlExpression;
 import codequery.sqlexpressions.DeleteExpression;
 import codequery.sqlexpressions.ISqlExpression;
 import codequery.sqlexpressions.SetAssignment;
+import codequery.sqlexpressions.SelectExpression;
 import codequery.sqlexpressions.SourceContext;
 import codequery.sqlexpressions.SqlBinaryOperator;
 import codequery.sqlexpressions.UpdateExpression;
@@ -34,6 +35,27 @@ class MutationQueryImpl {
 	public static function Updating(table:QualifiedTableName):MutationQueryImpl {
 		final context = new SourceContext();
 		return new MutationQueryImpl(new UpdateExpression(context.AddTableSource(table)), null, context);
+	}
+
+	/**
+		Begins an `UPDATE … FROM <source>`, drawing its new values from another query.
+
+		The source is registered on this statement's own context, so its alias cannot collide with
+		the target's — and a lambda then names the target first and the source second.
+	**/
+	public static function UpdatingFrom(table:QualifiedTableName, source:SelectExpression):MutationQueryImpl {
+		final context = new SourceContext();
+		final statement = new UpdateExpression(context.AddTableSource(table));
+		statement.FromSources.push(context.AddQuerySource(source));
+		return new MutationQueryImpl(statement, null, context);
+	}
+
+	/** Begins a `DELETE … USING <source>`, correlated with another query. */
+	public static function DeletingUsing(table:QualifiedTableName, source:SelectExpression):MutationQueryImpl {
+		final context = new SourceContext();
+		final statement = new DeleteExpression(context.AddTableSource(table));
+		statement.FromSources.push(context.AddQuerySource(source));
+		return new MutationQueryImpl(null, statement, context);
 	}
 
 	/** Begins a DELETE from a table. */

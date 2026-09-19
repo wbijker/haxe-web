@@ -120,6 +120,21 @@ class Expr {
 		return value == null ? constNull() : param(SqlConstDate(value));
 	}
 
+	/**
+		The same column, read one statement further out.
+
+		What a lateral's inner query needs to say about the row it is joined to: the column is the
+		outer statement's, not its own.
+	**/
+	public static function outer(column:ColumnSqlExpression):ColumnSqlExpression {
+		final parameter = Std.downcast(cast column.Source, ParameterSqlSource);
+		if (parameter == null) {
+			throw "Only a column bound to a lambda's parameter can be read from further out";
+		}
+		return new ColumnSqlExpression(ParameterSqlSource.At(parameter.Index, parameter.Scope + 1),
+			column.ColumnName, column.ColumnType);
+	}
+
 	public static function equal(left:ISqlExpression, right:ISqlExpression):BinarySqlExpression {
 		return new BinarySqlExpression(left, Equal, right);
 	}

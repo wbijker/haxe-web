@@ -30,7 +30,9 @@ class Main {
 		// C# names these by shorthand — new { f.Price.Forex, … }; Haxe structures always name a
 		// member, so the names are written out.
 		show(db.Bookings.From()
-			.Select(f -> {forex: f.price.forex, type: f.price.type, zar: f.price.zar})
+			.Select(f -> {guestId: f.guestId})
+			// .Select(f -> {a: f.guestId})
+			// .Select(f -> {forex: f.price.forex, type: f.price.type, zar: f.price.zar})
 			.ToExpression());
 
 		section("Raising those prices by a seventh");

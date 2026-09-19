@@ -4,7 +4,9 @@ import codequery.sqlexpressions.BinarySqlExpression;
 import codequery.sqlexpressions.ISqlExpression;
 import codequery.sqlexpressions.ISqlSource;
 import codequery.sqlexpressions.JoinSqlExpression;
+import codequery.sqlexpressions.CommonTableExpression;
 import codequery.sqlexpressions.ExistsSqlExpression;
+import codequery.sqlexpressions.RowLockMode;
 import codequery.sqlexpressions.GroupingMode;
 import codequery.sqlexpressions.SetOperationType;
 import codequery.sqlexpressions.UnionSqlExpression;
@@ -63,6 +65,26 @@ class SelectQueryImpl {
 			if (mode != None) {
 				expression.Grouping = mode;
 			}
+		});
+	}
+
+	/** What `GroupByGroupingSets` compiles down to. */
+	public function GroupBySet(keys:Array<ISqlExpression>):SelectQueryImpl {
+		return Fork(expression -> expression.GroupingSets.push(keys));
+	}
+
+	/** What `With` compiles down to: a query named in front of this one. */
+	public function WithQuery(name:String, other:SelectQueryImpl, recursive:Bool = false):SelectQueryImpl {
+		return Fork(expression -> expression.With.push(
+			new CommonTableExpression(name, other.ToExpression(), recursive)));
+	}
+
+	/** What the locking clauses compile down to. */
+	public function Locking(mode:RowLockMode, skipLocked:Bool = false, noWait:Bool = false):SelectQueryImpl {
+		return Fork(expression -> {
+			expression.Lock = mode;
+			expression.LockSkipLocked = skipLocked;
+			expression.LockNoWait = noWait;
 		});
 	}
 

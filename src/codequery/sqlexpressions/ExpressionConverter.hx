@@ -155,6 +155,11 @@ class ExpressionConverter {
 				macro ${Factory("constInt")}($v{-Std.parseInt(v)});
 
 			case _:
+				// Already an expression — a lateral's inner query is handed the outer row's
+				// columns this way, since it has no parameter of its own for them.
+				if (IsSqlExpression(e)) {
+					return e;
+				}
 				final constant = ConstantOf(e);
 				if (constant != null) {
 					return constant;
@@ -179,6 +184,80 @@ class ExpressionConverter {
 			case TConst(TBool(v)): macro ${Factory("constBool")}($v{v});
 			case TConst(TNull): macro ${Factory("constNull")}();
 			case _: null;
+		}
+	}
+
+	/** Whether an expression is already one of ours, and so needs no converting. */
+	static function IsSqlExpression(e:Expr):Bool {
+		return try {
+			Context.unify(Context.typeof(e), Context.getType("codequery.sqlexpressions.ISqlExpression"));
+		} catch (_:Dynamic) {
+			false;
+		}
+	}
+
+	/**
+		A lateral join: the inner query is written against the outer row, and joined to it.
+
+		Everything else takes a lambda over rows and converts it. A lateral takes a lambda that
+		answers with a whole query, and that query is built by its own macro calls — which bind
+		their parameters from zero in their own statement, knowing nothing of the row outside. So
+		the outer row's columns are substituted into the body before any of that runs, each one
+		marked as belonging a statement further out.
+	**/
+	public static function Lateral(self:Expr, lateral:Expr, joinType:String):Expr {
+		final rows = EntitiesOf(self);
+		final fn = switch lateral.expr {
+			case EFunction(_, f) if (f.args.length == rows.length): f;
+			case _: Context.error('Expected a lambda of ${rows.length} row(s) answering with a query',
+					lateral.pos);
+		}
+
+		final bound = new Map<String, Int>();
+		for (index => arg in fn.args) {
+			bound.set(arg.name, index);
+		}
+
+		// Substituted before anything is typed: typing the body expands the inner query's own
+		// macros, and they must see the outer row's columns already put in.
+		final inner = SubstituteOuter(Unwrap(fn.expr), bound, rows);
+
+		final kind = macro $p{["codequery", "sqlexpressions", "JoinType", joinType]};
+		final query = macro(cast $self : codequery.queries.SelectQueryImpl);
+		final joined = macro $query.JoinQuery($kind, (cast $inner : codequery.queries.SelectQueryImpl));
+
+		// The joined query brings a row, as any other join does.
+		return Answering(joined, rows.concat([LateralRow(inner, lateral.pos)]));
+	}
+
+	/** The row a lateral's query answers with. */
+	static function LateralRow(inner:Expr, pos:Position):Type {
+		return switch Context.typeof(inner).follow() {
+			case TAbstract(_, [row]): row;
+			case TInst(_, [row]): row;
+			case t: Context.error('A lateral answers with a query; this one answers with ${t.toString()}', pos);
+		}
+	}
+
+	/** Replace every reach into an outer row with that column, marked a statement further out. */
+	static function SubstituteOuter(e:Expr, bound:Map<String, Int>, rows:Array<Type>):Expr {
+		return switch e.expr {
+			case EField(_, _, _):
+				final reached = PathOf(e, bound);
+				if (reached == null) {
+					{expr: ExprTools.map(e, inner -> SubstituteOuter(inner, bound, rows)).expr, pos: e.pos};
+				} else {
+					final row = rows[reached.row];
+					final column = ColumnsBuilder.Member(ColumnsBuilder.Of(row, reached.row),
+						MemberOf(reached.path, row, e.pos));
+					// Annotated with what the member holds, so the inner query still type-checks —
+					// a predicate is typed before it is read, and a column is not an Int.
+					final held = MemberTypeOf(reached.path, row, e.pos).toComplexType();
+					macro(cast codequery.sqlexpressions.Expr.outer($column) : $held);
+				}
+
+			case _:
+				ExprTools.map(e, inner -> SubstituteOuter(inner, bound, rows));
 		}
 	}
 
@@ -407,6 +486,31 @@ class ExpressionConverter {
 		return path.join(ColumnsBuilder.Separator);
 	}
 
+	/** What the member at the end of a path holds. */
+	static function MemberTypeOf(path:Array<String>, entity:Type, pos:Position):Type {
+		var row = switch entity.follow() {
+			case TInst(t, _): t.get();
+			case t: Context.error('${t.toString()} has no members to reach', pos);
+		}
+
+		var held:Null<Type> = null;
+		for (step in 0...path.length) {
+			final found = FieldNamed(row, path[step]);
+			if (found == null) {
+				Context.error('${row.name} has no field "${path[step]}"', pos);
+			}
+			held = found.type;
+			if (step == path.length - 1) {
+				break;
+			}
+			row = switch found.type.follow() {
+				case TInst(t, _): t.get();
+				case t: Context.error('${path[step]} is ${t.toString()}, which has no members to reach', pos);
+			}
+		}
+		return held;
+	}
+
 	static function FieldNamed(row:ClassType, name:String):Null<ClassField> {
 		for (field in row.fields.get()) {
 			if (field.name == name) {
@@ -479,8 +583,12 @@ class ExpressionConverter {
 				final source = ColumnsBuilder.Member(ColumnsBuilder.Of(rows[bound[name]], bound[name]), "Source");
 				macro new codequery.sqlexpressions.AllColumnsSqlExpression($source);
 
+			// One expression, naming nothing — `a -> a.name`, which C# answers with a query of that
+			// value. There is one column and it needs no name, since nothing reads it by one.
 			case _:
-				Context.error('A projection is a structure or a row, not ${e.toString()}', e.pos);
+				final only = ToSqlExpression(e, bound, rows);
+				macro new codequery.sqlexpressions.ProjectionSqlExpression(
+					[new codequery.sqlexpressions.ProjectionMember("", $only)]);
 		}
 	}
 
@@ -728,9 +836,14 @@ class ExpressionConverter {
 
 	/** A runtime value, as the constant it will be by the time the statement runs. */
 	public static function Valued(value:Expr):Expr {
+		return ValuedAs(value, Context.typeof(value));
+	}
+
+	/** The same, where the type is already known and the expression cannot be typed on its own. */
+	public static function ValuedAs(value:Expr, type:Type):Expr {
 		// Unwrapped first: an enum abstract is its underlying number by the time SQL sees it, and
 		// SqlDate is a date.
-		final factory = Factory(switch Context.typeof(value).followWithAbstracts() {
+		final factory = Factory(switch type.followWithAbstracts() {
 			case TAbstract(_.get() => {name: "Int"}, _): "constInt";
 			case TAbstract(_.get() => {name: "Float"}, _): "constFloat";
 			case TAbstract(_.get() => {name: "Bool"}, _): "constBool";
@@ -774,6 +887,55 @@ class ExpressionConverter {
 		return macro codequery.queries.InsertStatement.Of($table, $columnList, $valueList);
 	}
 
+	/** `UPDATE … FROM` and `DELETE … USING`, which reach a second row. */
+	public static function MutationFrom(table:Expr, source:Expr, begins:String, answers:String):Expr {
+		final rows = [EntityOf(table), EntityOf(source)];
+		final statement = macro(cast $source : codequery.queries.SelectQueryImpl).ToExpression();
+		final begun = macro $p{["codequery", "queries", "MutationQueryImpl", begins]}($table.Table, $statement);
+
+		final queryType = TPath({
+			pack: ["codequery", "queries"],
+			name: answers,
+			params: [for (row in rows) TPType(row.toComplexType())]
+		});
+		return macro(cast $begun : $queryType);
+	}
+
+	/** Several entities in one statement — the same columns, a row of values each. */
+	public static function ConvertInsertMany(table:Expr, entries:Expr, entity:Type):Expr {
+		final row = switch entity.follow() {
+			case TInst(t, _): t.get();
+			case t: Context.error('${t.toString()} is not an entity class', entries.pos);
+		}
+
+		// The columns are the same for every row, so they are read once, off a name standing for
+		// whichever entity is being written.
+		final columns:Array<Expr> = [];
+		final values:Array<Expr> = [];
+		InsertMembers(row, macro entry, [], [], columns, values);
+
+		final columnList = {expr: EArrayDecl(columns), pos: entries.pos};
+		final valueList = {expr: EArrayDecl(values), pos: entries.pos};
+		return macro codequery.queries.InsertStatement.Many($table, $columnList,
+			[for (entry in $entries) $valueList]);
+	}
+
+	/** `INSERT … SELECT`, where the rows come from a query. */
+	public static function ConvertInsertFrom(table:Expr, source:Expr, entity:Type):Expr {
+		final row = switch entity.follow() {
+			case TInst(t, _): t.get();
+			case t: Context.error('${t.toString()} is not an entity class', source.pos);
+		}
+
+		final columns:Array<Expr> = [];
+		final values:Array<Expr> = [];
+		InsertMembers(row, macro entry, [], [], columns, values);
+
+		final columnList = {expr: EArrayDecl(columns), pos: source.pos};
+		final statement = macro(cast $source : codequery.queries.SelectQueryImpl).ToExpression();
+		return macro codequery.queries.InsertStatement.FromQuery($table, $columnList, $statement);
+	}
+
 	static function InsertMembers(row:ClassType, entry:Expr, member:Array<String>, visited:Array<String>,
 			columns:Array<Expr>, values:Array<Expr>):Void {
 		for (field in row.fields.get()) {
@@ -798,7 +960,7 @@ class ExpressionConverter {
 			if (nested == null) {
 				final column = member.concat([ColumnsBuilder.ColumnNameOf(field)]).join(ColumnsBuilder.Separator);
 				columns.push(macro $v{column});
-				values.push(Valued(read));
+				values.push(ValuedAs(read, field.type));
 				continue;
 			}
 
@@ -847,6 +1009,24 @@ class ExpressionConverter {
 	/** The row a window arrives as. */
 	public static function WindowRow():Type {
 		return Context.getType("codequery.INamedWindow");
+	}
+
+	/**
+		One grouping set — a lambda naming one key, or a structure naming several:
+		`r -> r.unitId`, or `r -> {a: r.unitId, b: r.guestId}`.
+	**/
+	public static function ConvertKeySet(set:Expr, rows:Array<Type>):Expr {
+		final body = switch set.expr {
+			case EFunction(_, f): Unwrap(f.expr);
+			case _: Context.error("Expected a grouping set, e.g. r -> r.unitId", set.pos);
+		}
+		// One key is not a structure, so it is not a projection either.
+		if (!body.expr.match(EObjectDecl(_))) {
+			final key = ConvertKey(set, rows);
+			return macro [$key];
+		}
+		final selection = ConvertProjection(set, rows).selection;
+		return macro codequery.sqlexpressions.ProjectionKeys.Of($selection);
 	}
 
 	/** `UNION`, `INTERSECT` and `EXCEPT`, which put two statements' rows together. */

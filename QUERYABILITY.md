@@ -41,16 +41,16 @@ types against this port. Worked in batches of ten, top down.
 - [x] 28. `UNION`, `UNION ALL`
 - [x] 29. `INTERSECT`, `EXCEPT`
 - [x] 30. `GROUP BY ROLLUP`
-- [ ] 31. `GROUP BY CUBE`
-- [ ] 32. `GROUPING SETS`
-- [ ] 33. CTEs — `WITH`
-- [ ] 34. Recursive CTEs
-- [ ] 35. Row locking — `FOR UPDATE`, `SKIP LOCKED`, `NOWAIT`
-- [ ] 36. Lateral joins
-- [ ] 37. `UPDATE … FROM <source>`
-- [ ] 38. `DELETE … USING <source>`
-- [ ] 39. Multi-row `INSERT`
-- [ ] 40. `INSERT … SELECT`
+- [x] 31. `GROUP BY CUBE`
+- [x] 32. `GROUPING SETS`
+- [x] 33. CTEs — `WITH`
+- [x] 34. Recursive CTEs
+- [x] 35. Row locking — `FOR UPDATE`, `SKIP LOCKED`, `NOWAIT`
+- [x] 36. Lateral joins
+- [x] 37. `UPDATE … FROM <source>`
+- [x] 38. `DELETE … USING <source>`
+- [x] 39. Multi-row `INSERT`
+- [x] 40. `INSERT … SELECT`
 - [ ] 41. Upsert — `ON CONFLICT`
 - [ ] 42. Joins declared on an entity
 - [ ] 43. `DbView`

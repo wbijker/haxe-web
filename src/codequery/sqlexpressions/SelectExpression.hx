@@ -21,6 +21,18 @@ class SelectExpression implements ISqlStatement {
 	/** Plain grouping, or one of the two that also group the totals. */
 	public var Grouping:GroupingMode = None;
 
+	/** `GROUPING SETS (…)` — the groupings named one by one rather than derived. */
+	public final GroupingSets:Array<Array<ISqlExpression>> = [];
+
+	/** The queries named in front of this one, which it and they can select from. */
+	public final With:Array<CommonTableExpression> = [];
+
+	/** What the statement locks of the rows it reads. */
+	public var Lock:RowLockMode = None;
+
+	public var LockSkipLocked:Bool = false;
+	public var LockNoWait:Bool = false;
+
 	/** The statements this one's rows are put together with. */
 	public final Unions:Array<UnionSqlExpression> = [];
 
@@ -72,6 +84,15 @@ class SelectExpression implements ISqlStatement {
 			copy.GroupBy.push(key);
 		}
 		copy.Grouping = Grouping;
+		for (set in GroupingSets) {
+			copy.GroupingSets.push(set);
+		}
+		for (cte in With) {
+			copy.With.push(cte);
+		}
+		copy.Lock = Lock;
+		copy.LockSkipLocked = LockSkipLocked;
+		copy.LockNoWait = LockNoWait;
 		for (union in Unions) {
 			copy.Unions.push(union);
 		}

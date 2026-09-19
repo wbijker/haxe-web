@@ -141,6 +141,62 @@ class SelectQueryExtensions {
 		return Grouped(self, keySelector, "Cube");
 	}
 
+	/**
+		`GROUP BY GROUPING SETS ((a), (a, b), ())` — the groupings named one by one:
+		`.GroupByGroupingSets(r -> r.unitId, r -> r.guestId)`, each lambda one set.
+	**/
+	public static macro function GroupByGroupingSets(self:Expr, sets:Array<Expr>):Expr {
+		final rows = ExpressionConverter.EntitiesOf(self);
+		var query = Impl(self);
+		for (set in sets) {
+			final keys = ExpressionConverter.ConvertKeySet(set, rows);
+			query = macro $query.GroupBySet($keys);
+		}
+		return ExpressionConverter.Answering(query, rows);
+	}
+
+	/** `WITH <name> AS (<query>)` — a query named in front of this one, which can select from it. */
+	public static macro function With(self:Expr, name:Expr, other:Expr):Expr {
+		final rows = ExpressionConverter.EntitiesOf(self);
+		final inner = macro(cast $other : codequery.queries.SelectQueryImpl);
+		return ExpressionConverter.Answering(macro ${Impl(self)}.WithQuery($name, $inner), rows);
+	}
+
+	/** `WITH RECURSIVE <name> AS (<query>)`. */
+	public static macro function WithRecursive(self:Expr, name:Expr, other:Expr):Expr {
+		final rows = ExpressionConverter.EntitiesOf(self);
+		final inner = macro(cast $other : codequery.queries.SelectQueryImpl);
+		return ExpressionConverter.Answering(macro ${Impl(self)}.WithQuery($name, $inner, true), rows);
+	}
+
+	/** `FOR UPDATE` — the rows read are locked against anyone else changing them. */
+	public static macro function ForUpdate(self:Expr):Expr {
+		final rows = ExpressionConverter.EntitiesOf(self);
+		return ExpressionConverter.Answering(
+			macro ${Impl(self)}.Locking(codequery.sqlexpressions.RowLockMode.Update), rows);
+	}
+
+	/** `FOR SHARE` — the rows read may be read by others but not changed. */
+	public static macro function ForShare(self:Expr):Expr {
+		final rows = ExpressionConverter.EntitiesOf(self);
+		return ExpressionConverter.Answering(
+			macro ${Impl(self)}.Locking(codequery.sqlexpressions.RowLockMode.Share), rows);
+	}
+
+	/** `SKIP LOCKED` — rows someone else holds are passed over rather than waited for. */
+	public static macro function SkipLocked(self:Expr):Expr {
+		final rows = ExpressionConverter.EntitiesOf(self);
+		return ExpressionConverter.Answering(
+			macro ${Impl(self)}.Locking(codequery.sqlexpressions.RowLockMode.Update, true), rows);
+	}
+
+	/** `NOWAIT` — a row someone else holds is an error rather than a wait. */
+	public static macro function NoWait(self:Expr):Expr {
+		final rows = ExpressionConverter.EntitiesOf(self);
+		return ExpressionConverter.Answering(
+			macro ${Impl(self)}.Locking(codequery.sqlexpressions.RowLockMode.Update, false, true), rows);
+	}
+
 	/** `GROUP BY key`. Called again, it adds another term. */
 	public static macro function GroupBy(self:Expr, keySelector:Expr):Expr {
 		final rows = ExpressionConverter.EntitiesOf(self);
@@ -212,6 +268,21 @@ class SelectQueryExtensions {
 	/** `FULL OUTER JOIN <source> ON <on>`. */
 	public static macro function OuterJoin(self:Expr, source:Expr, on:Expr):Expr {
 		return ExpressionConverter.Join(self, source, on, "Outer");
+	}
+
+	/**
+		`CROSS JOIN LATERAL (<query>)` — a query written against the row it is joined to:
+		`.InnerJoinLateral(b -> db.Lines.From().Where(l -> l.deliveryId == b.id))`.
+
+		There is no condition, because the correlation is inside the query itself.
+	**/
+	public static macro function InnerJoinLateral(self:Expr, lateral:Expr):Expr {
+		return ExpressionConverter.Lateral(self, lateral, "CrossLateral");
+	}
+
+	/** `LEFT JOIN LATERAL (<query>) ON TRUE` — the outer row is kept even where the query is empty. */
+	public static macro function LeftJoinLateral(self:Expr, lateral:Expr):Expr {
+		return ExpressionConverter.Lateral(self, lateral, "LeftLateral");
 	}
 
 	/** `CROSS JOIN <source>` — every row against every row, so there is no condition. */

@@ -57,6 +57,31 @@ class DbTable<T> implements IQuery<T> {
 	}
 
 	/**
+		Begins an `UPDATE … FROM <source>`. A lambda over it names this table first and the
+		source's rows second.
+	**/
+	public macro function UpdateFrom(self:Expr, source:Expr):Expr {
+		return ExpressionConverter.MutationFrom(self, source, "UpdatingFrom", "IUpdateQuery2");
+	}
+
+	/** Begins a `DELETE … USING <source>`, correlated with it. */
+	public macro function DeleteUsing(self:Expr, source:Expr):Expr {
+		return ExpressionConverter.MutationFrom(self, source, "DeletingUsing", "IDeleteQuery2");
+	}
+
+	/** Inserts several entities at once — one statement, a row of values each. */
+	public macro function InsertMany(self:Expr, entries:Expr):Expr {
+		final entity = ExpressionConverter.EntityOf(self);
+		return ExpressionConverter.ConvertInsertMany(self, entries, entity);
+	}
+
+	/** `INSERT … SELECT` — the rows come from a query rather than from values. */
+	public macro function InsertFrom(self:Expr, source:Expr):Expr {
+		final entity = ExpressionConverter.EntityOf(self);
+		return ExpressionConverter.ConvertInsertFrom(self, source, entity);
+	}
+
+	/**
 		Inserts one entity.
 
 		C# reads the row's values off it by reflection and answers with the number of rows written.

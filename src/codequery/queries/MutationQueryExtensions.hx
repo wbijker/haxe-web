@@ -21,7 +21,9 @@ class MutationQueryExtensions {
 	**/
 	public static macro function Set(self:Expr, column:Expr, value:Expr):Expr {
 		final rows = ExpressionConverter.EntitiesOf(self);
-		final target = ExpressionConverter.ConvertColumn(column, rows);
+		// A column is assigned on the target, so it names that row alone; what it is assigned may
+		// name every row the statement has.
+		final target = ExpressionConverter.ConvertColumn(column, [rows[0]]);
 		final assigned = ExpressionConverter.ConvertValue(value, rows);
 		return ExpressionConverter.AnsweringMutation(macro ${Impl(self)}.SetColumn($target, $assigned), self);
 	}

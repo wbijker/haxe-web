@@ -12,7 +12,9 @@ import codequery.sqlexpressions.SqlFunctionExpression;
 import codequery.sqlexpressions.ColumnSqlExpression;
 import codequery.sqlexpressions.ConstSqlExpression;
 import codequery.sqlexpressions.ISqlExpressionVisitor;
+import codequery.sqlexpressions.CteSqlSource;
 import codequery.sqlexpressions.QuantifiedComparisonSqlExpression;
+import codequery.sqlexpressions.RowLockMode;
 import codequery.sqlexpressions.RawSqlExpression;
 import codequery.sqlexpressions.ScalarSubquerySqlExpression;
 import codequery.sqlexpressions.SqlCastExpression;
@@ -55,6 +57,20 @@ class SqlDriver implements ISqlExpressionVisitor<String> {
 	/** The values of the statement being rendered, in the order their placeholders were numbered. */
 	var parameters:Array<SqlConstValue> = [];
 
+	/** The statements being rendered, innermost last, so a column can name one further out. */
+	var scopes:Array<Array<ISqlSource>> = [];
+
+	/**
+		The alias each source renders under, settled here rather than where it was built.
+
+		A statement is built knowing nothing of what it will end up inside: a query built on its own
+		numbers its sources from t0, and so does the query it is later made a subquery of. Naming
+		them as they are rendered is what keeps the two apart.
+	**/
+	var aliases:haxe.ds.ObjectMap<ISqlSource, String> = new haxe.ds.ObjectMap();
+
+	var aliasCounter:Int = 0;
+
 	/** What was sent beside the last statement rendered. */
 	public var Parameters(default, null):Array<SqlConstValue> = [];
 
@@ -67,6 +83,8 @@ class SqlDriver implements ISqlExpressionVisitor<String> {
 	public function ToSql(statement:ISqlStatement):String {
 		// Each statement collects its own values; a placeholder is numbered by where it lands.
 		parameters = [];
+		aliases = new haxe.ds.ObjectMap();
+		aliasCounter = 0;
 		final sql = Render(statement);
 		Parameters = parameters;
 		return sql;
@@ -96,13 +114,36 @@ class SqlDriver implements ISqlExpressionVisitor<String> {
 		throw 'Cannot render ${Type.getClassName(Type.getClass(statement))}';
 	}
 
-	/** Each statement renders against its own sources; whatever was in scope is restored after. */
+	/**
+		Each statement renders against its own sources, with the statements enclosing it kept
+		beneath — which is what lets a lateral's inner query name the row it is joined to.
+	**/
 	function Against(statementSources:Array<ISqlSource>, render:Void->String):String {
 		final outer = sources;
+		for (source in statementSources) {
+			Named(source);
+		}
+		scopes.push(statementSources);
 		sources = statementSources;
 		final sql = render();
+		scopes.pop();
 		sources = outer;
 		return sql;
+	}
+
+	/** The alias a source renders under, given one the first time it is seen. */
+	function Named(source:ISqlSource):String {
+		// A window is referred to by the name it was given, not by an alias.
+		if (Std.downcast(cast source, NamedWindowSqlSource) != null) {
+			return source.Alias;
+		}
+		final known = aliases.get(source);
+		if (known != null) {
+			return known;
+		}
+		final given = "t" + aliasCounter++;
+		aliases.set(source, given);
+		return given;
 	}
 
 	function UpdateSql(update:UpdateExpression):String {
@@ -146,7 +187,7 @@ class SqlDriver implements ISqlExpressionVisitor<String> {
 		var sql = 'INSERT INTO ${target.Table} ($columns)';
 
 		if (insert.FromSelect != null) {
-			sql += ' ${ToSql(insert.FromSelect)}';
+			sql += ' ${Against(insert.FromSelect.AllSources(), () -> Statement(insert.FromSelect))}';
 		} else {
 			final rows = insert.Values.map(row -> '(${row.map(RenderExpression).join(", ")})').join(", ");
 			sql += ' VALUES $rows';
@@ -159,24 +200,34 @@ class SqlDriver implements ISqlExpressionVisitor<String> {
 	}
 
 	function ToSelectSql(expression:SelectExpression):String {
-		// Each statement renders against its own sources; a subquery restores the outer ones after.
-		final outer = sources;
-		sources = expression.AllSources();
-		final sql = Statement(expression);
-		sources = outer;
-		return sql;
+		return Against(expression.AllSources(), () -> Statement(expression));
 	}
 
 	/** The statement itself, rendered against whichever sources are in scope. */
 	function Statement(expression:SelectExpression):String {
-		var sql = 'SELECT${Distinct(expression)} ${Selection(expression)} FROM ${Source(expression.Source)}';
+		// The named queries come first: what follows them can select from them.
+		var sql = "";
+		if (expression.With.length > 0) {
+			final recursive = expression.With.filter(cte -> cte.Recursive).length > 0 ? "RECURSIVE " : "";
+			final named = expression.With
+				.map(cte -> '${cte.Name} AS (${Against(cte.Query.AllSources(), () -> Statement(cte.Query))})')
+				.join(", ");
+			sql += 'WITH $recursive$named ';
+		}
+
+		sql += 'SELECT${Distinct(expression)} ${Selection(expression)} FROM ${Source(expression.Source)}';
 		for (join in expression.Joins) {
 			sql += " " + Join(join);
 		}
 		if (expression.Where != null) {
 			sql += ' WHERE ${RenderExpression(expression.Where)}';
 		}
-		if (expression.GroupBy.length > 0) {
+		if (expression.GroupingSets.length > 0) {
+			final sets = expression.GroupingSets
+				.map(set -> '(${set.map(RenderExpression).join(", ")})')
+				.join(", ");
+			sql += ' GROUP BY GROUPING SETS ($sets)';
+		} else if (expression.GroupBy.length > 0) {
 			final keys = expression.GroupBy.map(RenderExpression).join(", ");
 			sql += switch expression.Grouping {
 				case None: ' GROUP BY $keys';
@@ -194,6 +245,7 @@ class SqlDriver implements ISqlExpressionVisitor<String> {
 			sql += ' ORDER BY ${expression.OrderBy.map(RenderOrderBy).join(", ")}';
 		}
 		sql += RowLimit(expression);
+		sql += Locking(expression);
 
 		// A set operation joins two whole statements, so it comes after everything either says.
 		for (union in expression.Unions) {
@@ -222,12 +274,17 @@ class SqlDriver implements ISqlExpressionVisitor<String> {
 
 		final table = Std.downcast(cast source, TableSqlSource);
 		if (table != null) {
-			return '${table.Table} AS ${table.Alias}';
+			return '${table.Table} AS ${Named(table)}';
+		}
+
+		final cte = Std.downcast(cast source, CteSqlSource);
+		if (cte != null) {
+			return '${cte.Cte.Name} AS ${Named(cte)}';
 		}
 
 		final query = Std.downcast(cast source, QuerySqlSource);
 		if (query != null) {
-			return '(${ToSql(query.Query)}) AS ${query.Alias}';
+			return '(${Against(query.Query.AllSources(), () -> Statement(query.Query))}) AS ${Named(query)}';
 		}
 
 		throw 'Cannot render a source of ${Type.getClassName(Type.getClass(source))}';
@@ -235,7 +292,12 @@ class SqlDriver implements ISqlExpressionVisitor<String> {
 
 	function Join(join:JoinSqlExpression):String {
 		final sql = '${JoinKeyword(join.Type)} ${Source(join.Source)}';
-		return join.On == null ? sql : '$sql ON ${RenderExpression(join.On)}';
+		if (join.On != null) {
+			return '$sql ON ${RenderExpression(join.On)}';
+		}
+		// A left join needs a condition even where the correlation is inside the query, and TRUE is
+		// the one that keeps every outer row.
+		return join.Type == LeftLateral ? '$sql ON TRUE' : sql;
 	}
 
 	function JoinKeyword(type:JoinType):String {
@@ -248,6 +310,19 @@ class SqlDriver implements ISqlExpressionVisitor<String> {
 			case CrossLateral: "CROSS JOIN LATERAL";
 			case LeftLateral: "LEFT JOIN LATERAL";
 		}
+	}
+
+	function Locking(expression:SelectExpression):String {
+		final mode = switch expression.Lock {
+			case None: return "";
+			case Update: "FOR UPDATE";
+			case NoKeyUpdate: "FOR NO KEY UPDATE";
+			case Share: "FOR SHARE";
+			case KeyShare: "FOR KEY SHARE";
+		}
+		// Only one of the two: a row is either passed over or waited for.
+		final waiting = expression.LockSkipLocked ? " SKIP LOCKED" : (expression.LockNoWait ? " NOWAIT" : "");
+		return ' $mode$waiting';
 	}
 
 	function Distinct(expression:SelectExpression):String {
@@ -377,7 +452,11 @@ class SqlDriver implements ISqlExpressionVisitor<String> {
 	}
 
 	public function OnProjection(e:ProjectionSqlExpression):String {
-		return e.Members.map(member -> '${RenderExpression(member.Expression)} AS ${member.Name}').join(", ");
+		return e.Members.map(member -> {
+			final selected = RenderExpression(member.Expression);
+			// A projection of one expression names nothing, so there is nothing to alias it as.
+			return member.Name == "" ? selected : '$selected AS ${member.Name}';
+		}).join(", ");
 	}
 
 	public function OnExists(e:ExistsSqlExpression):String {
@@ -526,10 +605,16 @@ class SqlDriver implements ISqlExpressionVisitor<String> {
 		if (parameter == null) {
 			return source.Alias;
 		}
-		if (parameter.Index >= sources.length) {
-			throw 'This statement has ${sources.length} source(s), so it has no row ${parameter.Index}';
+
+		final frame = scopes.length - 1 - parameter.Scope;
+		if (frame < 0) {
+			throw 'Nothing encloses this statement ${parameter.Scope} deep, so it has no row to name';
 		}
-		return sources[parameter.Index].Alias;
+		final within = scopes[frame];
+		if (parameter.Index >= within.length) {
+			throw 'That statement has ${within.length} source(s), so it has no row ${parameter.Index}';
+		}
+		return Named(within[parameter.Index]);
 	}
 
 	/**
