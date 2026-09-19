@@ -38,6 +38,46 @@ class Expr {
 		return new ConstSqlExpression(SqlConstNull);
 	}
 
+	public static function not(operand:ISqlExpression):NotSqlExpression {
+		return new NotSqlExpression(operand);
+	}
+
+	public static function isIn(value:ISqlExpression, values:Array<ISqlExpression>, negate:Bool = false):InSqlExpression {
+		return new InSqlExpression(value, values, null, negate);
+	}
+
+	public static function inQuery(value:ISqlExpression, subquery:SelectExpression, negate:Bool = false):InSqlExpression {
+		return new InSqlExpression(value, [], subquery, negate);
+	}
+
+	public static function between(value:ISqlExpression, lower:ISqlExpression, upper:ISqlExpression,
+			negate:Bool = false):BetweenSqlExpression {
+		return new BetweenSqlExpression(value, lower, upper, negate);
+	}
+
+	public static function isDistinctFrom(left:ISqlExpression, right:ISqlExpression,
+			negate:Bool = false):IsDistinctFromSqlExpression {
+		return new IsDistinctFromSqlExpression(left, right, negate);
+	}
+
+	public static function caseWhen(branches:Array<CaseBranch>, ?otherwise:ISqlExpression):CaseSqlExpression {
+		return new CaseSqlExpression(branches, otherwise);
+	}
+
+	public static function branch(when:ISqlExpression, then:ISqlExpression):CaseBranch {
+		return new CaseBranch(when, then);
+	}
+
+	/** A function written as `name(a, b)`. */
+	public static function call(name:String, arguments:Array<ISqlExpression>):SqlFunctionExpression {
+		return new SqlFunctionExpression(name, arguments);
+	}
+
+	/** A function written between its arguments, as `||` is. */
+	public static function infix(name:String, arguments:Array<ISqlExpression>):SqlFunctionExpression {
+		return new SqlFunctionExpression(name, arguments, true);
+	}
+
 	public static function equal(left:ISqlExpression, right:ISqlExpression):BinarySqlExpression {
 		return new BinarySqlExpression(left, Equal, right);
 	}

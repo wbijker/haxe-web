@@ -5,16 +5,16 @@ types against this port. Worked in batches of ten, top down.
 
 ## Expressions
 
-- [ ] 1. `NOT`
-- [ ] 2. `IN (…)` over a list
-- [ ] 3. `IN (…)` over a subquery
-- [ ] 4. `BETWEEN`
-- [ ] 5. `LIKE` / `ILIKE`
-- [ ] 6. `IS DISTINCT FROM`
-- [ ] 7. `CASE WHEN`
-- [ ] 8. `COALESCE` / `NULLIF`
-- [ ] 9. String functions — `UPPER`, `LOWER`, `LENGTH`, `TRIM`, `SUBSTRING`
-- [ ] 10. String concatenation
+- [x] 1. `NOT`
+- [x] 2. `IN (…)` over a list
+- [x] 3. `IN (…)` over a subquery
+- [x] 4. `BETWEEN`
+- [x] 5. `LIKE` / `ILIKE`
+- [x] 6. `IS DISTINCT FROM`
+- [x] 7. `CASE WHEN`
+- [x] 8. `COALESCE` / `NULLIF`
+- [x] 9. String functions — `UPPER`, `LOWER`, `LENGTH`, `TRIM`, `SUBSTRING`
+- [x] 10. String concatenation
 - [ ] 11. `CAST`
 - [ ] 12. Raw SQL, as an escape hatch
 - [ ] 13. Scalar subquery

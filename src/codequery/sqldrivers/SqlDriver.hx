@@ -2,7 +2,13 @@ package codequery.sqldrivers;
 
 import codequery.sqlexpressions.AggregateSqlExpression;
 import codequery.sqlexpressions.AllColumnsSqlExpression;
+import codequery.sqlexpressions.BetweenSqlExpression;
 import codequery.sqlexpressions.BinarySqlExpression;
+import codequery.sqlexpressions.CaseSqlExpression;
+import codequery.sqlexpressions.InSqlExpression;
+import codequery.sqlexpressions.IsDistinctFromSqlExpression;
+import codequery.sqlexpressions.NotSqlExpression;
+import codequery.sqlexpressions.SqlFunctionExpression;
 import codequery.sqlexpressions.ColumnSqlExpression;
 import codequery.sqlexpressions.ConstSqlExpression;
 import codequery.sqlexpressions.DeleteExpression;
@@ -285,18 +291,72 @@ class SqlDriver {
 				.join(", ");
 		}
 
+		final negation = Std.downcast(cast e, NotSqlExpression);
+		if (negation != null) {
+			return 'NOT (${RenderExpression(negation.Operand)})';
+		}
+
+		final within = Std.downcast(cast e, InSqlExpression);
+		if (within != null) {
+			final keyword = within.Negate ? "NOT IN" : "IN";
+			// Not correlated: the subquery stands on its own sources, so the outer ones are out of
+			// scope inside it — unlike EXISTS, whose whole point is to reach them.
+			final of = within.Subquery != null
+				? Against(within.Subquery.AllSources(), () -> Statement(within.Subquery))
+				: within.Values.map(RenderExpression).join(", ");
+			return '${RenderExpression(within.Value)} $keyword ($of)';
+		}
+
+		final span = Std.downcast(cast e, BetweenSqlExpression);
+		if (span != null) {
+			final keyword = span.Negate ? "NOT BETWEEN" : "BETWEEN";
+			return '${RenderExpression(span.Value)} $keyword ${RenderExpression(span.Lower)} AND ${RenderExpression(span.Upper)}';
+		}
+
+		final distinct = Std.downcast(cast e, IsDistinctFromSqlExpression);
+		if (distinct != null) {
+			final keyword = distinct.Negate ? "IS NOT DISTINCT FROM" : "IS DISTINCT FROM";
+			return '${RenderExpression(distinct.Left)} $keyword ${RenderExpression(distinct.Right)}';
+		}
+
+		final branching = Std.downcast(cast e, CaseSqlExpression);
+		if (branching != null) {
+			var sql = "CASE";
+			for (branch in branching.Branches) {
+				sql += ' WHEN ${RenderExpression(branch.When)} THEN ${RenderExpression(branch.Then)}';
+			}
+			if (branching.Otherwise != null) {
+				sql += ' ELSE ${RenderExpression(branching.Otherwise)}';
+			}
+			return sql + " END";
+		}
+
+		final call = Std.downcast(cast e, SqlFunctionExpression);
+		if (call != null) {
+			final arguments = call.Arguments.map(RenderExpression);
+			return call.Infix
+				? arguments.join(' ${call.Name} ')
+				: '${call.Name}(${arguments.join(", ")})';
+		}
+
 		final exists = Std.downcast(cast e, ExistsSqlExpression);
 		if (exists != null) {
-			// Correlated: the subquery can name the outer statement's rows, so its sources are
-			// added to them rather than replacing them.
-			final outer = sources;
-			sources = sources.concat(exists.Subquery.AllSources());
-			final sql = '${exists.Negate ? "NOT EXISTS" : "EXISTS"} (${Statement(exists.Subquery)})';
-			sources = outer;
-			return sql;
+			return '${exists.Negate ? "NOT EXISTS" : "EXISTS"} (${Correlated(exists.Subquery)})';
 		}
 
 		throw 'Cannot render ${Type.getClassName(Type.getClass(e))}';
+	}
+
+	/**
+		A subquery that can name the outer statement's rows, so its sources are added to what is in
+		scope rather than replacing it.
+	**/
+	function Correlated(subquery:SelectExpression):String {
+		final outer = sources;
+		sources = sources.concat(subquery.AllSources());
+		final sql = Statement(subquery);
+		sources = outer;
+		return sql;
 	}
 
 	function RenderAggregate(aggregate:AggregateSqlExpression):String {

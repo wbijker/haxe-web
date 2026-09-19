@@ -96,6 +96,21 @@ class ExpressionConverter {
 				final r = ToSqlExpression(right, bound, rows);
 				macro $factory($l, $r);
 
+			// Haxe says CASE WHEN with a ternary, so that is what it converts to.
+			case ETernary(condition, then, otherwise) | EIf(condition, then, otherwise) if (otherwise != null):
+				final branch = macro codequery.sqlexpressions.Expr.branch(
+					${ToSqlExpression(condition, bound, rows)}, ${ToSqlExpression(then, bound, rows)});
+				final fallback = ToSqlExpression(otherwise, bound, rows);
+				macro codequery.sqlexpressions.Expr.caseWhen([$branch], $fallback);
+
+			case EUnop(OpNot, false, operand):
+				macro codequery.sqlexpressions.Expr.not(${ToSqlExpression(operand, bound, rows)});
+
+			// The calls of `Sql`, which is where what SQL has and Haxe has not is written.
+			case ECall({expr: EField({expr: EConst(CIdent("Sql"))}, name, _)}, args)
+				| ECall({expr: EField({expr: EField({expr: EConst(CIdent("codequery"))}, "Sql", _)}, name, _)}, args):
+				SqlCall(name, args, bound, rows, e.pos);
+
 			case EField(_, _, _):
 				final reached = PathOf(e, bound);
 				if (reached == null) {
@@ -168,6 +183,57 @@ class ExpressionConverter {
 			case TMeta(_, inner): UnwrapTyped(inner);
 			case TParenthesis(inner): UnwrapTyped(inner);
 			case _: e;
+		}
+	}
+
+	/** One of `Sql`'s calls, as the expression it stands for. */
+	static function SqlCall(name:String, args:Array<Expr>, bound:Map<String, Int>, rows:Array<Type>, pos:Position):Expr {
+		// Converted only where a call actually wants it: `isIn` takes its values as a list, which is
+		// not an expression and would not convert.
+		final arg = (index:Int) -> ToSqlExpression(args[index], bound, rows);
+		final list = (from:Int) -> {
+			expr: EArrayDecl([for (index in from...args.length) arg(index)]),
+			pos: pos
+		};
+
+		return switch name {
+			case "isIn" | "notIn":
+				final values = switch Unwrap(args[1]).expr {
+					case EArrayDecl(items): {expr: EArrayDecl([for (item in items) ToSqlExpression(item, bound, rows)]),
+							pos: pos};
+					case _: Context.error("Sql." + name + " takes the values as a list written out here", args[1].pos);
+				}
+				final negate = name == "notIn";
+				macro codequery.sqlexpressions.Expr.isIn(${arg(0)}, $values, $v{negate});
+
+			case "inQuery" | "notInQuery":
+				final negate = name == "notInQuery";
+				final subquery = macro(cast ${args[1]} : codequery.queries.SelectQueryImpl).ToExpression();
+				macro codequery.sqlexpressions.Expr.inQuery(${arg(0)}, $subquery, $v{negate});
+
+			case "between" | "notBetween":
+				final negate = name == "notBetween";
+				macro codequery.sqlexpressions.Expr.between(${arg(0)}, ${arg(1)}, ${arg(2)}, $v{negate});
+
+			case "like" | "notLike" | "ilike" | "notIlike":
+				final matching = StringTools.endsWith(name.toLowerCase(), "ilike") ? "ILIKE" : "LIKE";
+				final comparison = macro codequery.sqlexpressions.Expr.infix($v{matching}, ${list(0)});
+				StringTools.startsWith(name, "not") ? macro codequery.sqlexpressions.Expr.not($comparison) : comparison;
+
+			case "isDistinctFrom" | "isNotDistinctFrom":
+				final negate = name == "isNotDistinctFrom";
+				macro codequery.sqlexpressions.Expr.isDistinctFrom(${arg(0)}, ${arg(1)}, $v{negate});
+
+			case "coalesce": macro codequery.sqlexpressions.Expr.call("COALESCE", ${list(0)});
+			case "nullIf": macro codequery.sqlexpressions.Expr.call("NULLIF", ${list(0)});
+			case "upper": macro codequery.sqlexpressions.Expr.call("UPPER", ${list(0)});
+			case "lower": macro codequery.sqlexpressions.Expr.call("LOWER", ${list(0)});
+			case "length": macro codequery.sqlexpressions.Expr.call("LENGTH", ${list(0)});
+			case "trim": macro codequery.sqlexpressions.Expr.call("TRIM", ${list(0)});
+			case "substring": macro codequery.sqlexpressions.Expr.call("SUBSTRING", ${list(0)});
+			case "concat": macro codequery.sqlexpressions.Expr.infix("||", ${list(0)});
+
+			case _: Context.error('Sql.$name has no SQL here yet', pos);
 		}
 	}
 
