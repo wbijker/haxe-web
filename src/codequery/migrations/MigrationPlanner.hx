@@ -210,6 +210,13 @@ class MigrationPlanner {
 			ops.push(Added(table, column, schema));
 		}
 		for (pair in diff.ModifiedColumns) {
+			// A column that stays generated changes its expression in place; one becoming or ceasing to
+			// be generated is a redeclaration, since no ALTER turns the one into the other.
+			if ((pair.From.GeneratedExpression != null) != (pair.To.GeneratedExpression != null)) {
+				ops.push(new DropColumnExpression(table, pair.To.Name, schema));
+				ops.push(new AddColumnExpression(table, pair.To.ToColumnDefinition(), schema));
+				continue;
+			}
 			ops.push(new AlterColumnExpression(table, pair.To.Name, pair.To.ToColumnDefinition(), pair.From.ToColumnDefinition(), schema));
 		}
 		for (constraint in diff.AddedConstraints) {

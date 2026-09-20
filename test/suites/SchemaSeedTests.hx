@@ -26,7 +26,7 @@ class SchemaSeedTests extends TestCase {
 			.Column(a -> a.id)
 			.Column(a -> a.name).MaxLength(255).NotNull()
 			.Column(a -> a.country).MaxLength(255)
-			.Column(a -> a.id).PrimaryKey("PK_authors", false);
+			.Column(a -> a.id).PrimaryKey(ServerGenerated, false, "PK_authors");
 		s.Seed(SeedAuthor, authors);
 		return s;
 	}

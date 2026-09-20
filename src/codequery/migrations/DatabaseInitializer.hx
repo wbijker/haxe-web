@@ -3,6 +3,10 @@ package codequery.migrations;
 import codequery.execution.DatabaseConfiguration;
 import codequery.sqldrivers.ISqlDriver;
 import codequery.sqldrivers.ISqlTranslator;
+#if macro
+import haxe.macro.Context;
+import haxe.macro.Expr;
+#end
 
 /**
 	A schema, configured: what it looks like, where its migrations are kept, and what to run them
@@ -31,6 +35,70 @@ class DatabaseInitializer {
 		this.translator = translator;
 		this.Config = config;
 	}
+
+	/**
+		Builds a declared schema: `DatabaseInitializer.Build(ShopDb, configuration)` — the C#
+		`Build<ShopDb>(configuration)` — or from an instance, `Build(new ShopDb(3), configuration)`.
+
+		Each `DbTable` member is inspected from its entity, the member's own configuration applied,
+		then `configure` for the whole schema. The result is the schema instance; `Snapshot()` and
+		`Config()` from `DbSchemaExtensions` answer with what it was built into.
+	**/
+	public static macro function Build(schema:Expr, ?config:Expr, ?configure:Expr):Expr {
+		final made = switch schema.expr {
+			case EConst(CIdent(_)) | EField(_, _, _) if (IsTypeName(schema)):
+				{expr: ENew(SchemaMembers.TypePathOf(SchemaMembers.ClassTypeOf(schema)), []), pos: schema.pos};
+			case _: schema;
+		}
+		final cls = SchemaMembers.ClassTypeOf(schema);
+		final name = cls.name;
+
+		final statements:Array<Expr> = [];
+		statements.push(macro final __db = $made);
+		statements.push(macro final __snapshot = new codequery.migrations.SchemaSnapshot($v{name}));
+		for (table in SchemaMembers.TablesOf(cls)) {
+			final entity = SchemaMembers.ClassExpr(table.row);
+			final path = SchemaMembers.PathOf(table.row);
+			statements.push(macro {
+				final __definition = codequery.inspection.SchemaInspector.FromType($entity);
+				__snapshot.Tables.push(__definition);
+				__snapshot.EntityTables.set($v{path}, __definition);
+			});
+		}
+		for (table in SchemaMembers.TablesOf(cls)) {
+			final field = table.field.name;
+			statements.push(macro __db.$field.ApplyConfiguration(__snapshot));
+		}
+		// A partition declared as a member of its own is folded into its entity's table.
+		for (partition in SchemaMembers.PartitionsOf(cls)) {
+			final field = partition.field.name;
+			final path = SchemaMembers.PathOf(partition.row);
+			statements.push(macro {
+				final __partitioned = __snapshot.TableOf($v{path});
+				if (__partitioned != null) {
+					__partitioned.Partition = __db.$field.Build();
+				}
+			});
+		}
+		if (configure != null && !configure.expr.match(EConst(CIdent("null")))) {
+			statements.push(macro($configure : codequery.migrations.SchemaSnapshot -> Void)(__snapshot));
+		}
+		final held = config == null ? macro null : config;
+		statements.push(macro codequery.migrations.SchemaBindings.Bind(__db, __snapshot, $held));
+		statements.push(macro __db);
+		return {expr: EBlock(statements), pos: schema.pos};
+	}
+
+	#if macro
+	static function IsTypeName(e:Expr):Bool {
+		return try {
+			switch Context.typeof(e) {
+				case TType(_, _): true;
+				case _: false;
+			}
+		} catch (_:Dynamic) false;
+	}
+	#end
 
 	/** The same, taken whole from a driver that renders and runs. */
 	public static function On(schema:DatabaseSchema, migrationFolder:String, driver:ISqlDriver):DatabaseInitializer {

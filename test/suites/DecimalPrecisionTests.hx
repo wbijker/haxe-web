@@ -2,6 +2,9 @@ package suites;
 
 import codequery.DbTable;
 import codequery.migrations.DatabaseColumnDefinition;
+import codequery.migrations.DatabaseColumnType;
+import codequery.migrations.DatabaseTableDefinition;
+import codequery.migrations.EntityTableBuilder;
 import codequery.migrations.SchemaBuilder;
 import codequery.sqldrivers.SqlTranslator;
 import codequery.sqlexpressions.SqlType;
@@ -37,12 +40,33 @@ class DecimalPrecisionTests extends TestCase {
 
 	// --- What the fluent surface says --------------------------------------------------------------
 
-	function testTheFluentSurfaceSaysTheSameThing() {
-		Assert.skip("EntityTableBuilder: fluent column configuration not ported");
+	static function rates():DatabaseTableDefinition {
+		return SchemaBuilder.Of(new RateDb()).Table("rates");
 	}
 
+	function testTheFluentSurfaceSaysTheSameThing() {
+		final table = rates();
+		final builder = new EntityTableBuilder<Rate>(table);
+
+		builder.Column(r -> r.plain).Precision(10, 2);
+		builder.Column(r -> r.adjustment).Precision(6, 6);
+
+		final plain = table.Column("plain");
+		Assert.equals(10, plain.Precision);
+		Assert.equals(2, plain.Scale);
+
+		// And it overrides what the property said.
+		final adjustment = table.Column("adjustment");
+		Assert.equals(6, adjustment.Precision);
+		Assert.equals(6, adjustment.Scale);
+	}
+
+	/** It says only the precision: the column keeps the type it already had. */
 	function testItLeavesTheTypeAlone() {
-		Assert.skip("EntityTableBuilder: fluent column configuration not ported");
+		final table = rates();
+		new EntityTableBuilder<Rate>(table).Column(r -> r.plain).Precision(10, 2);
+
+		Assert.equals(DatabaseColumnType.Decimal, table.Column("plain").Type);
 	}
 
 	// --- What reaches the database -----------------------------------------------------------------
@@ -67,8 +91,13 @@ class DecimalPrecisionTests extends TestCase {
 		Assert.throws(() -> SchemaBuilder.Of(new NoDigitsDb()));
 	}
 
+	/** The fluent surface is held to the same rule, and says which column it was. */
 	function testAndSoIsTheFluentSurface() {
-		Assert.skip("EntityTableBuilder: fluent column configuration not ported");
+		final table = rates();
+		final builder = new EntityTableBuilder<Rate>(table);
+
+		final error = Assert.throwsMessage(() -> builder.Column(r -> r.factor).Precision(4, 6));
+		Assert.contains("Rate.factor", error);
 	}
 
 	// --- And through a database --------------------------------------------------------------------

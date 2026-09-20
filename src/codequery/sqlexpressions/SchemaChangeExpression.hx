@@ -20,7 +20,35 @@ enum SeedOperation {
 	hierarchy. Each is data about the change and nothing about any dialect.
 **/
 class SchemaChangeExpression implements ISqlStatement {
-	function new() {}
+	/** Which kind of change this is — the C# `ChangeType`, for a list of changes to be sorted by kind. */
+	public final ChangeType:SchemaChangeType;
+
+	function new(changeType:SchemaChangeType) {
+		this.ChangeType = changeType;
+	}
+}
+
+/** The kinds of change, as the C# `SchemaChangeType` names them. */
+enum SchemaChangeType {
+	CreateTable;
+	DropTable;
+	RenameTable;
+	AddColumn;
+	DropColumn;
+	AlterColumn;
+	RenameColumn;
+	AddConstraint;
+	DropConstraint;
+	CreateIndex;
+	DropIndex;
+	RenameIndex;
+	CreateSequence;
+	DropSequence;
+	DropType;
+	DropRoutine;
+	CreateRoutine;
+	SeedData;
+	Statement;
 }
 
 class CreateTableExpression extends SchemaChangeExpression {
@@ -39,7 +67,7 @@ class CreateTableExpression extends SchemaChangeExpression {
 
 	public function new(tableName:String, columns:Array<ColumnDefinition>, ?constraints:Array<TableConstraint>,
 			?schema:String, ifNotExists:Bool = false, ?partition:TablePartition) {
-		super();
+		super(CreateTable);
 		this.TableName = tableName;
 		this.Columns = columns;
 		this.Constraints = constraints == null ? [] : constraints;
@@ -56,7 +84,7 @@ class DropTableExpression extends SchemaChangeExpression {
 	public final Cascade:Bool;
 
 	public function new(tableName:String, ?schema:String, ifExists:Bool = false, cascade:Bool = false) {
-		super();
+		super(DropTable);
 		this.TableName = tableName;
 		this.Schema = schema;
 		this.IfExists = ifExists;
@@ -70,7 +98,7 @@ class RenameTableExpression extends SchemaChangeExpression {
 	public final Schema:Null<String>;
 
 	public function new(oldTableName:String, newTableName:String, ?schema:String) {
-		super();
+		super(RenameTable);
 		this.OldTableName = oldTableName;
 		this.NewTableName = newTableName;
 		this.Schema = schema;
@@ -89,7 +117,7 @@ class AddColumnExpression extends SchemaChangeExpression {
 	public final Backfill:Null<ISqlExpression>;
 
 	public function new(tableName:String, column:ColumnDefinition, ?schema:String, ?backfill:ISqlExpression) {
-		super();
+		super(AddColumn);
 		this.TableName = tableName;
 		this.Schema = schema;
 		this.Column = column;
@@ -104,7 +132,7 @@ class DropColumnExpression extends SchemaChangeExpression {
 	public final Cascade:Bool;
 
 	public function new(tableName:String, columnName:String, ?schema:String, cascade:Bool = false) {
-		super();
+		super(DropColumn);
 		this.TableName = tableName;
 		this.Schema = schema;
 		this.ColumnName = columnName;
@@ -121,7 +149,7 @@ class AlterColumnExpression extends SchemaChangeExpression {
 
 	public function new(tableName:String, columnName:String, newDefinition:ColumnDefinition,
 			?oldDefinition:ColumnDefinition, ?schema:String) {
-		super();
+		super(AlterColumn);
 		this.TableName = tableName;
 		this.Schema = schema;
 		this.ColumnName = columnName;
@@ -137,7 +165,7 @@ class RenameColumnExpression extends SchemaChangeExpression {
 	public final NewColumnName:String;
 
 	public function new(tableName:String, oldColumnName:String, newColumnName:String, ?schema:String) {
-		super();
+		super(RenameColumn);
 		this.TableName = tableName;
 		this.Schema = schema;
 		this.OldColumnName = oldColumnName;
@@ -151,7 +179,7 @@ class AddConstraintExpression extends SchemaChangeExpression {
 	public final Constraint:TableConstraint;
 
 	public function new(tableName:String, constraint:TableConstraint, ?schema:String) {
-		super();
+		super(AddConstraint);
 		this.TableName = tableName;
 		this.Schema = schema;
 		this.Constraint = constraint;
@@ -165,7 +193,7 @@ class DropConstraintExpression extends SchemaChangeExpression {
 	public final Cascade:Bool;
 
 	public function new(tableName:String, constraintName:String, ?schema:String, cascade:Bool = false) {
-		super();
+		super(DropConstraint);
 		this.TableName = tableName;
 		this.Schema = schema;
 		this.ConstraintName = constraintName;
@@ -203,7 +231,7 @@ class CreateIndexExpression extends SchemaChangeExpression {
 	public function new(tableName:String, indexName:String, columns:Array<IndexColumnDefinition>, isUnique:Bool = false,
 			isClustered:Bool = false, ?filterExpression:String, ?schema:String, ifNotExists:Bool = false,
 			?includeColumns:Array<String>, ?method:String) {
-		super();
+		super(CreateIndex);
 		this.TableName = tableName;
 		this.Schema = schema;
 		this.IndexName = indexName;
@@ -225,7 +253,7 @@ class DropIndexExpression extends SchemaChangeExpression {
 	public final Cascade:Bool;
 
 	public function new(tableName:String, indexName:String, ?schema:String, ifExists:Bool = false, cascade:Bool = false) {
-		super();
+		super(DropIndex);
 		this.TableName = tableName;
 		this.Schema = schema;
 		this.IndexName = indexName;
@@ -241,7 +269,7 @@ class RenameIndexExpression extends SchemaChangeExpression {
 	public final NewIndexName:String;
 
 	public function new(tableName:String, oldIndexName:String, newIndexName:String, ?schema:String) {
-		super();
+		super(RenameIndex);
 		this.TableName = tableName;
 		this.Schema = schema;
 		this.OldIndexName = oldIndexName;
@@ -257,7 +285,7 @@ class DropTypeExpression extends SchemaChangeExpression {
 	public final Cascade:Bool;
 
 	public function new(typeName:String, ?schema:String, ifExists:Bool = false, isDomain:Bool = false, cascade:Bool = false) {
-		super();
+		super(DropType);
 		this.TypeName = typeName;
 		this.Schema = schema;
 		this.IfExists = ifExists;
@@ -277,7 +305,7 @@ class DropRoutineExpression extends SchemaChangeExpression {
 	public final Table:Null<String>;
 
 	public function new(kind:DatabaseRoutineKind, name:String, ?schema:String, cascade:Bool = false, ?table:String) {
-		super();
+		super(DropRoutine);
 		this.Kind = kind;
 		this.Name = name;
 		this.Schema = schema;
@@ -294,7 +322,7 @@ class CreateRoutineExpression extends SchemaChangeExpression {
 	public final Body:Null<String>;
 
 	public function new(kind:DatabaseRoutineKind, name:String, ?schema:String, ?body:String) {
-		super();
+		super(CreateRoutine);
 		this.Kind = kind;
 		this.Name = name;
 		this.Schema = schema;
@@ -315,7 +343,7 @@ class SeedDataExpression extends SchemaChangeExpression {
 
 	public function new(operation:SeedOperation, tableName:String, ?schema:String, columns:Array<String>,
 			keyColumns:Array<String>, values:Map<String, String>) {
-		super();
+		super(SeedData);
 		this.Operation = operation;
 		this.TableName = tableName;
 		this.Schema = schema;
@@ -332,7 +360,7 @@ class StatementExpression extends SchemaChangeExpression {
 	public final IsUndo:Bool;
 
 	public function new(name:String, sql:String, isUndo:Bool = false) {
-		super();
+		super(Statement);
 		this.Name = name;
 		this.Sql = sql;
 		this.IsUndo = isUndo;

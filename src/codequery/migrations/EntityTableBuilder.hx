@@ -1,11 +1,14 @@
 package codequery.migrations;
 
+import codequery.migrations.ColumnBuilder;
+import codequery.migrations.DatabaseColumnType;
 import codequery.migrations.DatabaseIndexDefinition;
 import codequery.migrations.DatabaseTableConstraint;
 import codequery.sqlexpressions.ColumnDefinition;
-import codequery.sqlexpressions.ConstSqlExpression;
 import codequery.sqlexpressions.SqlType;
 #if macro
+import codequery.migrations.CheckExpressionRenderer;
+import codequery.migrations.ColumnBuilderMacros;
 import codequery.sqlexpressions.ColumnsBuilder as EntityColumns;
 import haxe.macro.Context;
 import haxe.macro.Expr;
@@ -55,19 +58,62 @@ class EntityTableBuilder<T> {
 		this.Snapshot = snapshot;
 	}
 
-	/** Configures the column `property` maps to: `t.Column(a -> a.name)`. */
+	/**
+		Configures the column `property` maps to: `t.Column(a -> a.name)`. The builder is typed by
+		what the property is — a string gets `StringColumnBuilder`, a `Decimal` the one with
+		`Precision` — as C#'s overloads of `Column` choose it.
+	**/
 	public macro function Column(self:Expr, property:Expr):Expr {
-		final read = EntityTableBuilder.Read(self, property);
-		return macro $self.ColumnNamed($v{read.name}, ${read.type}, $v{read.nullable});
+		return ColumnBuilderMacros.ColumnCall(self, property);
 	}
 
-	/** The column by name, made from its type where the table has none yet. */
-	public function ColumnNamed(name:String, type:SqlType, nullable:Bool):ColumnBuilder<T> {
-		return new ColumnBuilder<T>(this, name, type, nullable);
+	/** The column by name, made from its query-side type where the table has none yet. */
+	public function ColumnNamed(name:String, type:SqlType, nullable:Bool):ColumnBuilder<T, Dynamic> {
+		return new ColumnBuilder<T, Dynamic>(this, name, DatabaseColumnTypes.OfSqlType(type).type, nullable, false, type);
 	}
 
-	/** A CHECK over the table, as SQL. */
-	public function Check(name:String, expression:String):EntityTableBuilder<T> {
+	// What `Column` expands to: the builder of the kind the property's type gets.
+
+	public function StringColumn(name:String, type:DatabaseColumnType, nullable:Bool, ?entity:String):StringColumnBuilder<T> {
+		return new StringColumnBuilder<T>(this, name, type, nullable, entity);
+	}
+
+	public function BinaryColumn(name:String, type:DatabaseColumnType, nullable:Bool, ?entity:String):BinaryColumnBuilder<T> {
+		return new BinaryColumnBuilder<T>(this, name, type, nullable, entity);
+	}
+
+	public function DecimalColumn<P>(name:String, type:DatabaseColumnType, nullable:Bool, ?entity:String):DecimalColumnBuilder<T, P> {
+		return new DecimalColumnBuilder<T, P>(this, name, type, nullable, entity);
+	}
+
+	public function DateTimeColumn<P>(name:String, type:DatabaseColumnType, nullable:Bool, ?entity:String):DateTimeColumnBuilder<T, P> {
+		return new DateTimeColumnBuilder<T, P>(this, name, type, nullable, entity);
+	}
+
+	public function TimeColumn<P>(name:String, type:DatabaseColumnType, nullable:Bool, ?entity:String):TimeColumnBuilder<T, P> {
+		return new TimeColumnBuilder<T, P>(this, name, type, nullable, entity);
+	}
+
+	public function PlainColumn<P>(name:String, type:DatabaseColumnType, nullable:Bool, isGuid:Bool = false, ?entity:String):ColumnBuilder<T, P> {
+		return new ColumnBuilder<T, P>(this, name, type, nullable, isGuid, null, entity);
+	}
+
+	/**
+		A CHECK spanning columns — `Check("CK_x", r -> r.start < r.end)` — a table constraint rather
+		than a column's, since no one column owns it. Written SQL is taken as it stands.
+	**/
+	public macro function Check(self:Expr, name:Expr, expression:Expr):Expr {
+		return switch expression.expr {
+			case EFunction(_, _):
+				final sql = CheckExpressionRenderer.RenderEntity(expression, expression.pos);
+				macro $self.CheckSql($name, $sql);
+			case _:
+				macro $self.CheckSql($name, $expression);
+		}
+	}
+
+	/** What `Check` expands to. */
+	public function CheckSql(name:String, expression:String):EntityTableBuilder<T> {
 		Definition.Check(name, expression);
 		return this;
 	}
@@ -118,203 +164,6 @@ class EntityTableBuilder<T> {
 		return Context.error('${row.name} has no field $fieldName', property.pos);
 	}
 	#end
-}
-
-/** One column of an entity's table, configured. */
-class ColumnBuilder<T> {
-	public final Table:EntityTableBuilder<T>;
-	public var ColumnName(default, null):String;
-	final type:SqlType;
-	final nullable:Bool;
-
-	public function new(table:EntityTableBuilder<T>, name:String, type:SqlType, nullable:Bool) {
-		this.Table = table;
-		this.ColumnName = name;
-		this.type = type;
-		this.nullable = nullable;
-		// Naming a column puts it in the table, in the order it was named.
-		Definition;
-	}
-
-	/** The column as it stands — added from its field's type where the table has none yet. */
-	public var Definition(get, never):DatabaseColumnDefinition;
-
-	function get_Definition():DatabaseColumnDefinition {
-		final held = Table.Definition.Column(ColumnName);
-		if (held != null) {
-			return held;
-		}
-		final column = new DatabaseColumnDefinition(ColumnName, type, nullable);
-		column.OrdinalIndex = Table.Definition.Columns.length;
-		Table.Definition.Columns.push(column);
-		return column;
-	}
-
-	/** On to the next column. */
-	public macro function Column(self:Expr, property:Expr):Expr {
-		return macro $self.Table.Column($property);
-	}
-
-	/** This column and another, for an index or a key over both. */
-	public macro function And(self:Expr, property:Expr):Expr {
-		final read = EntityTableBuilder.Read(macro $self.Table, property);
-		return macro $self.Columns().AndNamed($v{read.name}, ${read.type}, $v{read.nullable});
-	}
-
-	/** This column as a group of one, to add to. */
-	public function Columns():ColumnsBuilder<T> {
-		Definition;
-		return new ColumnsBuilder<T>(Table, [new DatabaseIndexColumn(ColumnName)]);
-	}
-
-	/** The column sorted descending, in an index over it and what follows. */
-	public function Descending():ColumnsBuilder<T> {
-		return Columns().Descending();
-	}
-
-	public function Named(name:String):ColumnBuilder<T> {
-		Definition.Name = name;
-		ColumnName = name;
-		return this;
-	}
-
-	public function Null():ColumnBuilder<T> {
-		return Nullable(true);
-	}
-
-	public function NotNull():ColumnBuilder<T> {
-		return Nullable(false);
-	}
-
-	public function Nullable(isNullable:Bool = true):ColumnBuilder<T> {
-		Definition.Nullable = isNullable;
-		return this;
-	}
-
-	public function MaxLength(length:Int):ColumnBuilder<T> {
-		Definition.MaxLength = length;
-		return this;
-	}
-
-	public function Precision(precision:Int, scale:Int):ColumnBuilder<T> {
-		Definition.Precision = precision;
-		Definition.Scale = scale;
-		return this;
-	}
-
-	/**
-		The column's DEFAULT, written as the value it is: a number, a string, a boolean, a date. A
-		date is the value it constructs, since nothing in a default can name a column.
-	**/
-	public function Default(value:Dynamic):ColumnBuilder<T> {
-		final column = Definition;
-		if (Std.isOfType(value, Date)) {
-			final date:Date = value;
-			final text = date.getHours() == 0 && date.getMinutes() == 0 && date.getSeconds() == 0
-				? DateTools.format(date, "%Y-%m-%d")
-				: DateTools.format(date, "%Y-%m-%d %H:%M:%S");
-			column.SetDefaultValue(new ConstSqlExpression(SqlConstString(text)));
-		} else if (Std.isOfType(value, Bool)) {
-			column.SetDefaultValue(new ConstSqlExpression(SqlConstBool(value)));
-		} else if (Std.isOfType(value, Int)) {
-			column.SetDefaultValue(new ConstSqlExpression(SqlConstInt(value)));
-		} else if (Std.isOfType(value, Float)) {
-			column.SetDefaultValue(new ConstSqlExpression(SqlConstFloat(value)));
-		} else if (value == null) {
-			column.DefaultValue = null;
-			column.DefaultValueTree = null;
-		} else {
-			column.SetDefaultValue(new ConstSqlExpression(SqlConstString(Std.string(value))));
-		}
-		return this;
-	}
-
-	public function Collate(collation:String):ColumnBuilder<T> {
-		Definition.Collation = collation;
-		return this;
-	}
-
-	public function Comment(comment:String):ColumnBuilder<T> {
-		Definition.Comment = comment;
-		return this;
-	}
-
-	/** Whether the database assigns the value on insert. */
-	public function AutoIncrement(autoIncrement:Bool = true):ColumnBuilder<T> {
-		Definition.IsAutoIncrement = autoIncrement;
-		return this;
-	}
-
-	/** The database assigns the value on insert, in the form `identity` names. */
-	public function Identity(?identity:IdentityKind):ColumnBuilder<T> {
-		Definition.IsAutoIncrement = true;
-		Definition.Identity = identity == null ? ByDefault : identity;
-		return this;
-	}
-
-	/**
-		The table's primary key, on this column, replacing any key already inferred. A server-generated
-		key may auto-increment; a client-generated one never does.
-	**/
-	public function PrimaryKey(?name:String, autoIncrement:Bool = true, ?identity:IdentityKind, ?generation:ValueGeneration):ColumnBuilder<T> {
-		final table = Table.Definition;
-		final kept = generation == null ? ServerGenerated : generation;
-		table.Constraints = [for (c in table.Constraints) if (!Std.isOfType(c, DatabasePrimaryKeyConstraint)) c];
-		final key = new DatabasePrimaryKeyConstraint(name == null ? 'PK_${table.Name}' : name, [ColumnName]);
-		key.Generation = kept;
-		table.Constraints.push(key);
-
-		final column = Definition;
-		column.PrimaryKey = true;
-		column.IsAutoIncrement = kept == ServerGenerated && autoIncrement;
-		column.Identity = identity == null ? ByDefault : identity;
-		column.Nullable = false;
-		return this;
-	}
-
-	public function Unique(?name:String):ColumnBuilder<T> {
-		Definition;
-		Table.Definition.Unique(name == null ? 'UQ_${Table.Definition.Name}_$ColumnName' : name, [ColumnName]);
-		return this;
-	}
-
-	/** An index on this column. */
-	public function Index(?name:String, descending:Bool = false):ColumnBuilder<T> {
-		return AddIndex(name, false, descending, BTree);
-	}
-
-	/** An index on this column, stored the way `type` says — a JSON column searched by its parts wants Gin. */
-	public function IndexUsing(type:IndexType, ?name:String, descending:Bool = false):ColumnBuilder<T> {
-		return AddIndex(name, false, descending, type);
-	}
-
-	public function UniqueIndex(?name:String, descending:Bool = false):ColumnBuilder<T> {
-		return AddIndex(name, true, descending, BTree);
-	}
-
-	function AddIndex(name:Null<String>, isUnique:Bool, descending:Bool, type:IndexType):ColumnBuilder<T> {
-		Definition;
-		final table = Table.Definition;
-		table.IndexOver(name == null ? 'IX_${table.Name}_$ColumnName' : name,
-			[new DatabaseIndexColumn(ColumnName, descending ? DatabaseSortOrder.Descending : DatabaseSortOrder.Ascending)], isUnique, false, null, IndexTypes.Method(type));
-		return this;
-	}
-
-	/** A CHECK over this column's value, as SQL. */
-	public function Check(expression:String, ?name:String):ColumnBuilder<T> {
-		Definition;
-		Table.Definition.Check(name == null ? 'CK_${Table.Definition.Name}_$ColumnName' : name, expression);
-		return this;
-	}
-
-	/** A foreign key from this column to another table's key. */
-	public function ForeignKey(referencedTable:String, referencedColumn:String, ?onDelete:DatabaseForeignKeyAction,
-			?onUpdate:DatabaseForeignKeyAction, ?name:String):ColumnBuilder<T> {
-		Definition;
-		Table.Definition.ForeignKey(name == null ? 'FK_${Table.Definition.Name}_$ColumnName' : name, [ColumnName], referencedTable,
-			[referencedColumn], onDelete, onUpdate);
-		return this;
-	}
 }
 
 /** Several columns named together, for an index or a key over all of them. */

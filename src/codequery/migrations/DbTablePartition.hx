@@ -102,31 +102,52 @@ class PartitionKeyBuilder {
 	final partitions:Array<PartitionDefinition> = [];
 	var count:Null<Int> = null;
 
+	/** The table this partitions, where it is configured on a column of one rather than built apart. */
+	var into:Null<DatabaseTableDefinition> = null;
+
 	public function new(keyExpression:String) {
 		this.KeyExpression = keyExpression;
 	}
 
+	/** Keeps `table.Partition` current with every step said here — `Column(...).PartitionBy()`. */
+	public function Into(table:DatabaseTableDefinition):PartitionKeyBuilder {
+		into = table;
+		Sync();
+		return this;
+	}
+
+	function Sync():Void {
+		if (into != null && strategy != null) {
+			into.Partition = Build();
+		}
+	}
+
 	public function AsRange():RangePartitions {
 		strategy = Range;
+		Sync();
 		return new RangePartitions(this);
 	}
 
 	public function AsList():ListPartitions {
 		strategy = List;
+		Sync();
 		return new ListPartitions(this);
 	}
 
 	public function AsHash():HashPartitions {
 		strategy = Hash;
+		Sync();
 		return new HashPartitions(this);
 	}
 
 	public function AddPartition(partition:PartitionDefinition):Void {
 		partitions.push(partition);
+		Sync();
 	}
 
 	public function Sized(partitions:Int):Void {
 		count = partitions;
+		Sync();
 	}
 
 	public function Build():TablePartition {

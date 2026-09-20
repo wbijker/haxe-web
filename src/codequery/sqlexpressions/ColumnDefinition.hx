@@ -32,6 +32,18 @@ class ColumnDefinition {
 	**/
 	public var ReferencesNote:Null<String> = null;
 
+	/** The generated column's expression in its stable string form, or null for an ordinary column. */
+	public var GeneratedExpression:Null<String> = null;
+
+	/** The generated expression as a tree, for a driver to render in its own spelling. */
+	public var GeneratedExpressionTree:Null<ISqlExpression> = null;
+
+	/** Whether a generated column is stored rather than computed on read. */
+	public var GeneratedStored:Null<Bool> = null;
+
+	/** Whether a Guid key is filled in by the database. */
+	public var ServerGeneratedGuid:Bool = false;
+
 	public function new(name:String, type:SqlType, isNullable:Bool = true, ?defaultValue:ISqlExpression,
 			?maxLength:Int, ?precision:Int, ?scale:Int, isAutoIncrement:Bool = false, ?collation:String,
 			?identity:IdentityKind) {

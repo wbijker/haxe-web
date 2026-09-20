@@ -4,8 +4,10 @@ import codequery.migrations.DatabaseColumnType;
 import codequery.migrations.DatabaseTableConstraint;
 import codequery.migrations.DatabaseIndexDefinition;
 import codequery.sqlexpressions.ColumnDefinition;
+import codequery.sqlexpressions.ISqlExpression;
 import codequery.sqlexpressions.SchemaChangeExpression;
 import codequery.sqlexpressions.TableConstraint;
+import codequery.sqlexpressions.TableCreateExpression;
 import codequery.sqlexpressions.TablePartition;
 
 /** A table, as the schema describes it. */
@@ -54,6 +56,11 @@ class DatabaseTableDefinition {
 		return null;
 	}
 
+	/** The column of that name, or null. Names compare regardless of case, as a database does. */
+	public function FindColumn(name:String):Null<DatabaseColumnDefinition> {
+		return Named(Columns, name);
+	}
+
 	// ---- the fluent surface -----------------------------------------------------------------------
 
 	/**
@@ -87,6 +94,20 @@ class DatabaseTableDefinition {
 		return this;
 	}
 
+	/** Marks a column as generated from `expression`, adding it if it is not already there. */
+	public function SetGenerated(name:String, type:DatabaseColumnType, isNullable:Bool, expression:ISqlExpression,
+			stored:Bool):DatabaseTableDefinition {
+		var column = Column(name);
+		if (column == null) {
+			column = DatabaseColumnDefinition.Of(name, type, isNullable);
+			column.OrdinalIndex = Columns.length;
+			Columns.push(column);
+		}
+		column.SetGeneratedExpression(expression);
+		column.GeneratedStored = stored;
+		return this;
+	}
+
 	public function PrimaryKey(name:String, columns:Array<String>):DatabaseTableDefinition {
 		Constraints.push(new DatabasePrimaryKeyConstraint(name, columns));
 		return this;
@@ -112,6 +133,12 @@ class DatabaseTableDefinition {
 	/** An ascending index over the named columns. */
 	public function Index(name:String, columns:Array<String>):DatabaseTableDefinition {
 		return IndexOver(name, [for (c in columns) new DatabaseIndexColumn(c)]);
+	}
+
+	/** The C# name for `IndexOver`. */
+	public function IndexColumns(name:String, columns:Array<DatabaseIndexColumn>, isUnique:Bool = false, isClustered:Bool = false,
+			?filterExpression:String, ?method:String):DatabaseTableDefinition {
+		return IndexOver(name, columns, isUnique, isClustered, filterExpression, method);
 	}
 
 	/** An index with its columns spelled out. */
@@ -150,6 +177,17 @@ class DatabaseTableDefinition {
 		return made;
 	}
 
+	/** A CREATE TABLE on its own, for a driver to render — the C# `TableCreateExpression`. */
+	public function ToTableCreateExpression(ifNotExists:Bool = false):TableCreateExpression {
+		return new TableCreateExpression(Name, [for (c in Columns) c.ToColumnDefinition()],
+			[for (c in Constraints) c.ToTableConstraint()], ifNotExists);
+	}
+
+	/** The changes that turn `from` into `to`; the static form of `Diff`. */
+	public static function DiffFrom(from:Null<DatabaseTableDefinition>, to:DatabaseTableDefinition):Array<SchemaChangeExpression> {
+		return to.Diff(from);
+	}
+
 	/** The changes that turn `from` into this table; a null `from` is a table to create. */
 	public function Diff(from:Null<DatabaseTableDefinition>):Array<SchemaChangeExpression> {
 		final changes:Array<SchemaChangeExpression> = [];
@@ -179,7 +217,14 @@ class DatabaseTableDefinition {
 		}
 		for (column in Columns) {
 			final was = Named(from.Columns, column.Name);
-			if (was != null && !column.Matches(was)) {
+			if (was == null || column.Matches(was)) {
+				continue;
+			}
+			// A generated column cannot be altered in place: its whole declaration is re-emitted.
+			if (column.GeneratedExpression != null || was.GeneratedExpression != null) {
+				changes.push(new DropColumnExpression(Name, column.Name, Schema));
+				changes.push(new AddColumnExpression(Name, column.ToColumnDefinition(), Schema));
+			} else {
 				changes.push(new AlterColumnExpression(Name, column.Name, column.ToColumnDefinition(), was.ToColumnDefinition(), Schema));
 			}
 		}

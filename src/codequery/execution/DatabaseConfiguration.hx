@@ -13,9 +13,18 @@ class DatabaseConfiguration {
 	public final Driver:ISqlTranslator;
 	public final Executor:Null<IDatabaseExecutor>;
 
-	public function new(driver:ISqlTranslator, ?executor:IDatabaseExecutor) {
+	/** The folder migrations are written to and read from — named, not located. */
+	public final MigrationFolder:Null<String>;
+
+	public function new(driver:ISqlTranslator, ?executor:IDatabaseExecutor, ?migrationFolder:String) {
 		this.Driver = driver;
 		this.Executor = executor;
+		this.MigrationFolder = migrationFolder;
+	}
+
+	/** The same configuration, with its migrations in `folder`. */
+	public function WithMigrations(folder:String):DatabaseConfiguration {
+		return new DatabaseConfiguration(Driver, Executor, folder);
 	}
 
 	/** The same, taken whole from a driver that carries both halves. */

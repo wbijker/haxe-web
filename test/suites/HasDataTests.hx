@@ -63,7 +63,7 @@ class HasDataTests extends TestCase {
 	static function WithSeed(authors:Array<HasDataAuthor>):SchemaSnapshot {
 		final s = new SchemaSnapshot();
 		s.DefineTable(HasDataAuthor, "authors")
-			.Column(a -> a.id).PrimaryKey("PK_authors", false)
+			.Column(a -> a.id).PrimaryKey(ServerGenerated, false, "PK_authors")
 			.Column(a -> a.name).MaxLength(255).NotNull()
 			.Column(a -> a.country).MaxLength(255)
 			.Table.HasData(authors);
@@ -85,7 +85,7 @@ class HasDataTests extends TestCase {
 		final list = [new HasDataAuthor(1, "Jane"), new HasDataAuthor(2, "Mark")];
 		final s = new SchemaSnapshot();
 		s.DefineTable(HasDataAuthor, "authors")
-			.Column(a -> a.id).PrimaryKey("PK_authors", false)
+			.Column(a -> a.id).PrimaryKey(ServerGenerated, false, "PK_authors")
 			.Column(a -> a.name).MaxLength(255).NotNull()
 			.Column(a -> a.country).MaxLength(255)
 			.Table.HasData(list);
@@ -95,7 +95,7 @@ class HasDataTests extends TestCase {
 	function testHasData_ChainsFluently_ReturningBuilder() {
 		final s = new SchemaSnapshot();
 		final builder = s.DefineTable(HasDataAuthor, "authors")
-			.Column(a -> a.id).PrimaryKey("PK_authors", false)
+			.Column(a -> a.id).PrimaryKey(ServerGenerated, false, "PK_authors")
 			.Column(a -> a.name).MaxLength(255).NotNull()
 			.Column(a -> a.country).MaxLength(255)
 			.Table;

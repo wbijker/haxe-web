@@ -2,25 +2,6 @@ package codequery.migrations;
 
 import codequery.sqlexpressions.SchemaChangeExpression;
 
-enum DatabaseSortOrder {
-	Ascending;
-	Descending;
-}
-
-class DatabaseIndexColumn {
-	public var ColumnName:String;
-	public var SortOrder:DatabaseSortOrder;
-
-	public function new(columnName:String, ?sortOrder:DatabaseSortOrder) {
-		this.ColumnName = columnName;
-		this.SortOrder = sortOrder == null ? Ascending : sortOrder;
-	}
-
-	public function Equals(other:DatabaseIndexColumn):Bool {
-		return other != null && ColumnName == other.ColumnName && Std.string(SortOrder) == Std.string(other.SortOrder);
-	}
-}
-
 /** An index as the schema records it. */
 class DatabaseIndexDefinition {
 	public var Name:String;
@@ -31,9 +12,14 @@ class DatabaseIndexDefinition {
 	public var IncludeColumns:Array<String> = [];
 	public var Method:Null<String> = null;
 
-	public function new(name:String = "", ?columns:Array<DatabaseIndexColumn>) {
+	public function new(name:String = "", ?columns:Array<DatabaseIndexColumn>, isUnique:Bool = false, isClustered:Bool = false,
+			?filterExpression:String, ?method:String) {
 		this.Name = name;
 		this.Columns = columns == null ? [] : columns;
+		this.IsUnique = isUnique;
+		this.IsClustered = isClustered;
+		this.FilterExpression = filterExpression;
+		this.Method = method;
 	}
 
 	public function ToCreateIndexExpression(tableName:String, ?schema:String, ifNotExists:Bool = false):CreateIndexExpression {

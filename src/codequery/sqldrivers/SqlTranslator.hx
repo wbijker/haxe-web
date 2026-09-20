@@ -156,6 +156,11 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 			return ToDdlSql(ddl);
 		}
 
+		final create = Std.downcast(cast statement, codequery.sqlexpressions.TableCreateExpression);
+		if (create != null) {
+			return new DdlTranslator(this).TableCreate(create);
+		}
+
 		// A migration's SQL is written rather than built, and goes through as it stands.
 		final raw = Std.downcast(cast statement, codequery.migrations.RawStatement);
 		if (raw != null) {

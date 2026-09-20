@@ -7,6 +7,7 @@ import codequery.sqlexpressions.ISqlExpression;
 import codequery.sqlexpressions.SchemaChangeExpression;
 import codequery.sqlexpressions.SqlType;
 import codequery.sqlexpressions.TableConstraint;
+import codequery.sqlexpressions.TableCreateExpression;
 import codequery.sqlexpressions.TablePartition;
 
 /**
@@ -80,6 +81,16 @@ class DdlTranslator {
 
 	// ---- tables ------------------------------------------------------------------------------------
 
+	/** A CREATE TABLE on its own — the C# `TableCreateExpression`, which is a statement rather than a change. */
+	public function TableCreate(e:TableCreateExpression):String {
+		final parts = [for (c in e.Columns) {sql: Column(c), note: c.ReferencesNote}];
+		for (c in e.Constraints) {
+			parts.push({sql: Constraint(c), note: null});
+		}
+		final ifNotExists = e.IfNotExists ? "IF NOT EXISTS " : "";
+		return 'CREATE TABLE $ifNotExists${e.TableName} ${Wrap(Body(parts))}';
+	}
+
 	function CreateTable(e:CreateTableExpression):String {
 		final parts = [for (c in e.Columns) {sql: Column(c), note: c.ReferencesNote}];
 		for (c in e.Constraints) {
@@ -146,6 +157,13 @@ class DdlTranslator {
 	// ---- columns -----------------------------------------------------------------------------------
 
 	public function Column(column:ColumnDefinition):String {
+		// A generated column is its expression, and nothing else can be said of it.
+		final generated = GeneratedExpression(column);
+		if (generated != null) {
+			final stored = column.GeneratedStored == false ? "VIRTUAL" : "STORED";
+			return '${column.Name} ${TypeName(column)} GENERATED ALWAYS AS ($generated) $stored';
+		}
+
 		final parts = [column.Name, TypeName(column)];
 
 		if (column.Collation != null && column.Collation != "") {
@@ -163,8 +181,22 @@ class DdlTranslator {
 		}
 		if (column.DefaultValue != null) {
 			parts.push('DEFAULT ${Default(column.DefaultValue)}');
+		} else if (column.ServerGeneratedGuid) {
+			throw 'The generic dialect cannot server-generate a GUID key for ${column.Name}: no server-side UUID function; use a client-generated key';
 		}
 		return parts.join(" ");
+	}
+
+	/**
+		The generated column's expression, rendered from its tree where there is one, or null for an
+		ordinary column. A column in a table's own definition names no source and takes no alias, so
+		the tree is written in the standard's spelling, bare.
+	**/
+	function GeneratedExpression(column:ColumnDefinition):Null<String> {
+		if (column.GeneratedExpressionTree != null) {
+			return new AnsiSqlRenderer(false).Render(column.GeneratedExpressionTree);
+		}
+		return column.GeneratedExpression;
 	}
 
 	/** The column's type as the dialect names it, with the length or precision the column gives it. */
@@ -209,6 +241,12 @@ class DdlTranslator {
 		final column = e.ColumnName;
 		final now = e.NewDefinition;
 		final was = e.OldDefinition;
+
+		// A column that stays generated changes only its expression.
+		final generated = GeneratedExpression(now);
+		if (generated != null) {
+			return 'ALTER TABLE $table ALTER COLUMN $column SET EXPRESSION AS ($generated)';
+		}
 
 		final actions = ['ALTER COLUMN $column TYPE ${TypeName(now)}'];
 

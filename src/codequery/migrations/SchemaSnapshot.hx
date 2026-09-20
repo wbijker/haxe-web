@@ -18,11 +18,52 @@ import haxe.macro.Expr;
 	connection to anything.
 **/
 class SchemaSnapshot extends DatabaseSchema {
-	/** The tables bound to entity classes, by the class's name — what `Entity(T)` looks up. */
+	/** A short random identity, as the C# snapshot carries one. */
+	public var Id:String;
+
+	/**
+		The tables bound to entity classes, by the class's path — what `Entity(T)` looks up. C# keys
+		this by `Type`; a class path is what Haxe has for one at runtime.
+	**/
 	public final EntityTables:Map<String, DatabaseTableDefinition> = new Map();
 
 	public function new(?name:String) {
 		super([], name);
+		this.Id = StringTools.hex(Std.random(0x7fffffff), 8).toLowerCase();
+		this.CreatedAt = Date.now();
+	}
+
+	/** The table an entity is bound to, by the entity's class path, or null. */
+	override public function TableOf(entity:String):Null<DatabaseTableDefinition> {
+		return EntityTables.get(entity);
+	}
+
+	/** Binds an entity to a table already in the snapshot: `snapshot.Bind(Trip, definition)`. */
+	public macro function Bind(self:Expr, entity:Expr, definition:Expr):Expr {
+		final row = SchemaInspector.ClassOf(entity);
+		return macro $self.EntityTables.set($v{row.pack.concat([row.name]).join(".")}, $definition);
+	}
+
+	/**
+		Registers an object created by running `sql`, under the stable identity `name`. Registering
+		the same name twice replaces it.
+	**/
+	public function Statement(name:String, sql:String, ?undoSql:String, ?table:String, afterRoutines:Bool = false):SchemaSnapshot {
+		var statement = null;
+		for (candidate in Statements) {
+			if (candidate.Name.toLowerCase() == name.toLowerCase()) {
+				statement = candidate;
+			}
+		}
+		if (statement == null) {
+			statement = new DatabaseStatementDefinition(name);
+			Statements.push(statement);
+		}
+		statement.Sql = sql;
+		statement.UndoSql = undoSql;
+		statement.Table = table;
+		statement.AfterRoutines = afterRoutines;
+		return this;
 	}
 
 	/**
@@ -94,10 +135,16 @@ class SchemaSnapshot extends DatabaseSchema {
 		}
 		final snapshot = new SchemaSnapshot(schema.Name);
 		snapshot.Version = schema.Version;
+		if (schema.CreatedAt != null) {
+			snapshot.CreatedAt = schema.CreatedAt;
+		}
+		snapshot.Description = schema.Description;
+		snapshot.Provider = schema.Provider;
 		snapshot.Tables = schema.Tables;
 		snapshot.Types = schema.Types;
 		snapshot.Routines = schema.Routines;
 		snapshot.Seeds = schema.Seeds;
+		snapshot.Statements = schema.Statements;
 		return snapshot;
 	}
 
@@ -112,27 +159,6 @@ class SchemaSnapshot extends DatabaseSchema {
 
 	public function ToDatabaseSchema():DatabaseSchema {
 		return this;
-	}
-
-	/** The table of that name, or null. */
-	public function GetTable(name:String, ?schema:String):Null<DatabaseTableDefinition> {
-		for (table in Tables) {
-			if (table.Name.toLowerCase() == name.toLowerCase() && (schema == null || table.Schema == schema)) {
-				return table;
-			}
-		}
-		return null;
-	}
-
-	/** The table of that name, made if it was not there — the C# `Table(name)`. */
-	public function AddTable(name:String, ?schema:String):DatabaseTableDefinition {
-		final held = GetTable(name, schema);
-		if (held != null) {
-			return held;
-		}
-		final table = new DatabaseTableDefinition(name, [], schema);
-		Tables.push(table);
-		return table;
 	}
 
 	/** A view by its rendered SQL. */

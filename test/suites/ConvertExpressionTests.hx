@@ -40,7 +40,13 @@ class ConvertExpressionTests extends TestCase {
 	}
 
 	function testConvert_ToInt16() {
-		Assert.skip("SqlType: no SmallInt in this port");
+		final exp = Query.select(Book)
+			.Select(b -> Sql.castTo(b.publishedYear, SqlSmallInt))
+			.ToExpression();
+
+		final converted = Assert.isType(exp.Selection, SqlCastExpression);
+		Assert.equals(SqlType.SqlSmallInt, converted.Type);
+		Assert.notNull(converted.Value);
 	}
 
 	function testConvert_ToDouble() {
@@ -54,7 +60,13 @@ class ConvertExpressionTests extends TestCase {
 	}
 
 	function testConvert_ToSingle() {
-		Assert.skip("SqlType: no single-precision Float in this port");
+		final exp = Query.select(Book)
+			.Select(b -> Sql.castTo(b.publishedYear, SqlReal))
+			.ToExpression();
+
+		final converted = Assert.isType(exp.Selection, SqlCastExpression);
+		Assert.equals(SqlType.SqlReal, converted.Type);
+		Assert.notNull(converted.Value);
 	}
 
 	function testConvert_ToDecimal() {

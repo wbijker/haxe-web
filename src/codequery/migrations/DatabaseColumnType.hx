@@ -46,7 +46,8 @@ class DatabaseColumnTypes {
 			case Float | Double: SqlFloat;
 			case Decimal: SqlDecimal(precision == null ? 0 : precision, scale == null ? 0 : scale);
 			case Char | NChar: SqlChar(maxLength == null ? 0 : maxLength);
-			case VarChar | NVarChar: SqlVarChar(maxLength == null ? 0 : maxLength);
+			// As C# has it: a VARCHAR is text, and the width travels beside the type.
+			case VarChar | NVarChar: SqlText;
 			case Text | NText | Xml: SqlText;
 			case Binary | VarBinary | Blob: SqlBinary;
 			case Date: SqlDate;
