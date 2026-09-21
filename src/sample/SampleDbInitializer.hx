@@ -1,9 +1,12 @@
 package sample;
 
+import codequery.ConsoleLogger;
 import codequery.execution.DatabaseConfiguration;
 import codequery.migrations.DatabaseInitializer;
 import codequery.migrations.SchemaBuilder;
 import codequery.mysql.MySqlConfiguration;
+
+using codequery.DbSchemaExtensions;
 
 /**
 	Builds the sample database from `SampleDb` and owns the configuration it runs against —
@@ -30,20 +33,31 @@ class SampleDbInitializer {
 		return DatabaseInitializer.Build(SampleDb, Configure());
 	}
 
-	/** The configuration on its own: the MySQL driver, connected where the target can connect. */
+	/**
+		The configuration on its own: the MySQL driver, connected where the target can connect, and
+		a console logger saying every statement as it is sent. Where the target cannot connect —
+		nothing but PHP has a MySQL client — the statements go to an executor that runs nothing, so
+		the logger still says them.
+	**/
 	public static function Configure():DatabaseConfiguration {
 		#if php
-		return MySqlConfiguration.Create(ConnectionString).WithMigrations(MigrationFolder);
+		final config = MySqlConfiguration.Create(ConnectionString);
 		#else
-		return MySqlConfiguration.Create().WithMigrations(MigrationFolder);
+		final config = new DatabaseConfiguration(MySqlConfiguration.Create().Driver, new codequery.execution.DryRunExecutor());
 		#end
+		return config.WithMigrations(MigrationFolder).WithLogger(new ConsoleLogger());
 	}
 
 	/**
 		Scaffolds a migration if the code schema has drifted from the latest snapshot, then applies
-		whatever is outstanding — the C# `db.AddMigrationIfSchemaChanged(run: true)`.
+		whatever is outstanding — the C# `db.AddMigrationIfSchemaChanged(run: true)`. Where nothing
+		can run, nothing is applied either: a dry run would only re-apply every migration each time.
 	**/
-	public static function Migrate(db:SampleDb, config:DatabaseConfiguration):Array<String> {
+	public static function Migrate(db:SampleDb):Array<String> {
+		final config = db.Config();
+		if (Std.isOfType(config.Executor, codequery.execution.DryRunExecutor)) {
+			return [];
+		}
 		final schema = new DatabaseInitializer(SchemaBuilder.Of(db), config.MigrationFolder, config.Driver, config);
 		final written = schema.AddMigrationIfSchemaChanged("sample");
 		if (written != null) {

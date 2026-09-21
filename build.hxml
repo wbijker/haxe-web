@@ -11,6 +11,7 @@
 --class-path src
 --main Main
 --php bin/php
+--macro codequery.php.ChainLayout.apply()
 --cmd php bin/php/index.php
 
 --next
@@ -19,6 +20,7 @@
 --class-path src
 --main RunPhp
 --php bin/php-runtime
+--macro codequery.php.ChainLayout.apply()
 --cmd php bin/php-runtime/index.php
 
 --next
@@ -27,4 +29,5 @@
 --class-path src
 --main RunMigrations
 --php bin/php-migrations
+--macro codequery.php.ChainLayout.apply()
 --cmd php bin/php-migrations/index.php bin/migrations
