@@ -6,6 +6,6 @@ package codequery.queries;
 	C#'s `ISelectQuery<T1, T2>`. Haxe has no overloading on the number of type parameters, so the
 	arity is in the name. The clauses live in `SelectQueryExtensions`, brought in by `@:using`.
 **/
-@:forward(ToExpression, CountExpression, Count)
+@:forward(ToExpression, CountExpression, Count, Fetch)
 @:using(codequery.queries.SelectQueryExtensions)
 abstract ISelectQuery2<T1, T2>(SelectQueryImpl) {}

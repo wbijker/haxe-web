@@ -19,11 +19,13 @@ class TemporaryTableTests extends TestCase {
 	}
 
 	function testMySqlAndSqlite_Temporary() {
-		Assert.skip("MySqlSqlDriver: no MySQL dialect in this port");
+		Assert.contains("CREATE TEMPORARY TABLE scratch", new codequery.mysql.MySqlSqlTranslator().ToDdl(CreateTable(table(true))));
+		Assert.skip("SqliteSqlDriver: no SQLite dialect in this port for the second half");
 	}
 
 	function testUnlogged_Unsupported_Throws() {
-		Assert.skip("MySqlSqlDriver: no MySQL dialect in this port");
+		Assert.throws(() -> new codequery.mysql.MySqlSqlTranslator().ToDdl(CreateTable(table(false, true))));
+		Assert.skip("SqliteSqlDriver: no SQLite dialect in this port for the second half");
 	}
 
 	function testSqlServer_Temporary_Throws() {

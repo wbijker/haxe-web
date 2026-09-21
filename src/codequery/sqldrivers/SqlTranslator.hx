@@ -793,7 +793,7 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 	}
 
 	public function OnCast(e:SqlCastExpression):String {
-		return 'CAST(${RenderExpression(e.Value)} AS ${RenderType(e.Type)})';
+		return 'CAST(${RenderExpression(e.Value)} AS ${RenderCastType(e.Type)})';
 	}
 
 	public function OnRaw(e:RawSqlExpression):String {
@@ -947,6 +947,49 @@ class SqlTranslator implements ISqlTranslator implements ISqlExpressionVisitor<S
 	/** A schema change expression as DDL — `pretty` lays a CREATE TABLE out one column a line. */
 	public function ToDdlSql(change:codequery.sqlexpressions.SchemaChangeExpression, pretty:Bool = false):String {
 		return new DdlTranslator(this, pretty).Render(change);
+	}
+
+	/** `CAST(x AS <type>)` — the type as this dialect spells it in a cast, where that differs from a column's. */
+	public function RenderCastType(type:SqlType):String {
+		return RenderType(type);
+	}
+
+	/**
+		The clause that makes a key column hand out its own numbers — PostgreSQL's identity column
+		— or null where the dialect says it with the type instead (`SerialTypeName`) or not at all.
+	**/
+	public function IdentityClause(column:codequery.sqlexpressions.ColumnDefinition):Null<String> {
+		return switch column.Identity {
+			case Always: "GENERATED ALWAYS AS IDENTITY";
+			// A SERIAL is a type rather than a clause; BY DEFAULT is what a key is, and goes unsaid.
+			case Serial | ByDefault: null;
+		}
+	}
+
+	/** Whether the identity clause follows NOT NULL (MySQL) rather than preceding it (PostgreSQL). */
+	public var IdentityAfterNullability(get, never):Bool;
+
+	function get_IdentityAfterNullability():Bool {
+		return false;
+	}
+
+	/** The type of a SERIAL column, or null where the dialect has no such type and says it as a clause. */
+	public function SerialTypeName(column:codequery.sqlexpressions.ColumnDefinition):Null<String> {
+		return switch column.Type {
+			case SqlSmallInt: "SMALLSERIAL";
+			case SqlBigInt: "BIGSERIAL";
+			case SqlInt: "SERIAL";
+			case t: throw 'Column "${column.Name}" is ${Std.string(t)}; SERIAL is an integer column only (SMALLSERIAL, SERIAL, BIGSERIAL).';
+		}
+	}
+
+	/** `TEMPORARY ` or `UNLOGGED ` in front of TABLE, or nothing; a dialect without one of them refuses it here. */
+	public function TableModifierKeyword(e:codequery.sqlexpressions.SchemaChangeExpression.CreateTableExpression):String {
+		return e.Temporary ? "TEMPORARY " : (e.Unlogged ? "UNLOGGED " : "");
+	}
+
+	public function MigrationHistoryDdl(table:String):String {
+		return 'CREATE TABLE IF NOT EXISTS $table (name TEXT PRIMARY KEY)';
 	}
 
 	public function RenderType(type:SqlType):String {

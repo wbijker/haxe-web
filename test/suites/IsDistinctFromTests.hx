@@ -87,7 +87,9 @@ class IsDistinctFromTests extends TestCase {
 	}
 
 	function testMySql_NegatesTheNullSafeEquals() {
-		Assert.skip("MySqlSqlDriver: no MySQL dialect (<=> spelling)");
+		final sql = new codequery.mysql.MySqlSqlTranslator()
+			.ToSql(Query.select(Unit).Where(r -> Sql.isDistinctFrom(r.name, r.previousName)).ToExpression());
+		Assert.equals("(NOT (t0.name <=> t0.previousName))", sql.substr(sql.indexOf("WHERE ") + 6));
 	}
 
 	function testSqlServer_UsesIntersect() {

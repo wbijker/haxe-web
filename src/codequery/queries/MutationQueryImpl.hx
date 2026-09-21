@@ -26,6 +26,9 @@ class MutationQueryImpl {
 
 	final context:SourceContext;
 
+	/** Where the statement runs, where it was begun on a table of a built schema; null renders only. */
+	public var Configuration:Null<DatabaseConfiguration>;
+
 	function new(update:Null<UpdateExpression>, delete:Null<DeleteExpression>, context:SourceContext) {
 		this.Update = update;
 		this.Delete = delete;
@@ -33,9 +36,17 @@ class MutationQueryImpl {
 	}
 
 	/** Begins an UPDATE of a table's rows. */
-	public static function Updating(table:QualifiedTableName):MutationQueryImpl {
+	public static function Updating(table:QualifiedTableName, ?configuration:DatabaseConfiguration):MutationQueryImpl {
 		final context = new SourceContext();
-		return new MutationQueryImpl(new UpdateExpression(context.AddTableSource(table)), null, context);
+		final query = new MutationQueryImpl(new UpdateExpression(context.AddTableSource(table)), null, context);
+		query.Configuration = configuration;
+		return query;
+	}
+
+	/** A statement derived from this one runs where this one does. */
+	function Carrying(derived:MutationQueryImpl):MutationQueryImpl {
+		derived.Configuration = Configuration;
+		return derived;
 	}
 
 	/**
@@ -60,9 +71,11 @@ class MutationQueryImpl {
 	}
 
 	/** Begins a DELETE from a table. */
-	public static function Deleting(table:QualifiedTableName):MutationQueryImpl {
+	public static function Deleting(table:QualifiedTableName, ?configuration:DatabaseConfiguration):MutationQueryImpl {
 		final context = new SourceContext();
-		return new MutationQueryImpl(null, new DeleteExpression(context.AddTableSource(table)), context);
+		final query = new MutationQueryImpl(null, new DeleteExpression(context.AddTableSource(table)), context);
+		query.Configuration = configuration;
+		return query;
 	}
 
 	/** What `Set` compiles down to. */
@@ -72,18 +85,18 @@ class MutationQueryImpl {
 		}
 		final updated = Update.Fork();
 		updated.Assignments.push(new SetAssignment(column, value));
-		return new MutationQueryImpl(updated, null, context.Fork());
+		return Carrying(new MutationQueryImpl(updated, null, context.Fork()));
 	}
 
 	public function WhereCondition(condition:ISqlExpression):MutationQueryImpl {
 		if (Update != null) {
 			final updated = Update.Fork();
 			updated.Where = And(updated.Where, condition);
-			return new MutationQueryImpl(updated, null, context.Fork());
+			return Carrying(new MutationQueryImpl(updated, null, context.Fork()));
 		}
 		final deleted = Delete.Fork();
 		deleted.Where = And(deleted.Where, condition);
-		return new MutationQueryImpl(null, deleted, context.Fork());
+		return Carrying(new MutationQueryImpl(null, deleted, context.Fork()));
 	}
 
 	/** What `Returning` compiles down to: the columns the statement hands back per row it touched. */
@@ -91,11 +104,11 @@ class MutationQueryImpl {
 		if (Update != null) {
 			final updated = Update.Fork();
 			updated.Returning.push(selection);
-			return new MutationQueryImpl(updated, null, context.Fork());
+			return Carrying(new MutationQueryImpl(updated, null, context.Fork()));
 		}
 		final deleted = Delete.Fork();
 		deleted.Returning.push(selection);
-		return new MutationQueryImpl(null, deleted, context.Fork());
+		return Carrying(new MutationQueryImpl(null, deleted, context.Fork()));
 	}
 
 	/** The statement built so far. */
@@ -105,7 +118,10 @@ class MutationQueryImpl {
 
 	/** How many rows it changed. Runs the statement, so it needs a connection to run it against. */
 	public function Execute():Int {
-		return RowCount.NeedsAConnection(Update != null ? "An update" : "A delete", "ToExpression()");
+		if (Configuration == null) {
+			return RowCount.NeedsAConnection(Update != null ? "An update" : "A delete", "ToExpression()");
+		}
+		return Configuration.Execute(ToExpression());
 	}
 
 	static function And(existing:Null<ISqlExpression>, condition:ISqlExpression):ISqlExpression {

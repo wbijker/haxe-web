@@ -38,8 +38,11 @@ class DbTable<T> implements IQuery<T> implements IDbTableMember {
 	/** What the member says about its table beyond what the entity's own metadata can. */
 	final configure:Null<codequery.migrations.EntityTableBuilder<T>->Void>;
 
-	/** The schema this member was declared on, where it was told — C#'s `new(this)`. */
-	final owner:Null<IDbSchema>;
+	/**
+		The schema this member was declared on: told at the constructor — C#'s `new(this)` — or
+		attached by `DatabaseInitializer.Build`, which is how a `DbTable.of()` member learns it.
+	**/
+	var owner:Null<{}>;
 
 	public function new(table:QualifiedTableName, ?entity:String, ?configure:codequery.migrations.EntityTableBuilder<T>->Void,
 			?owner:IDbSchema) {
@@ -47,6 +50,13 @@ class DbTable<T> implements IQuery<T> implements IDbTableMember {
 		this.EntityName = entity;
 		this.configure = configure;
 		this.owner = owner;
+	}
+
+	/** What `DatabaseInitializer.Build` does to each table of the schema it builds. */
+	public function AttachTo(schema:{}):Void {
+		if (owner == null) {
+			owner = schema;
+		}
 	}
 
 	/** The configuration the declaring schema was built against, or null where it has none or was not built. */
@@ -86,17 +96,17 @@ class DbTable<T> implements IQuery<T> implements IDbTableMember {
 	}
 
 	public function From():ISelectQuery<T> {
-		return cast SelectQueryImpl.OverTable(Table);
+		return cast SelectQueryImpl.OverTable(Table, Configuration);
 	}
 
 	/** Begins an UPDATE of this table's rows. */
 	public function Update():IUpdateQuery<T> {
-		return cast MutationQueryImpl.Updating(Table);
+		return cast MutationQueryImpl.Updating(Table, Configuration);
 	}
 
 	/** Begins a DELETE from this table. */
 	public function Delete():IDeleteQuery<T> {
-		return cast MutationQueryImpl.Deleting(Table);
+		return cast MutationQueryImpl.Deleting(Table, Configuration);
 	}
 
 	/**

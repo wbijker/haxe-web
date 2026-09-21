@@ -40,6 +40,10 @@ class SqlDriver implements ISqlDriver {
 		return Translator.ToDdlSql(change, pretty);
 	}
 
+	public function MigrationHistoryDdl(table:String):String {
+		return Translator.MigrationHistoryDdl(table);
+	}
+
 	/** Nothing to run against unless a runtime says otherwise. */
 	public function Executor():Null<IDatabaseExecutor> {
 		return null;

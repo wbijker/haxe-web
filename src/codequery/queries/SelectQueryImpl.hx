@@ -42,15 +42,41 @@ class SelectQueryImpl {
 
 	final context:SourceContext;
 
+	/**
+		Where the query runs, where it was begun on a table that knows — a table of a schema built
+		by `DatabaseInitializer.Build(…, configuration)`. Null for a query that only renders.
+	**/
+	public var Configuration:Null<DatabaseConfiguration>;
+
 	public function new(expression:SelectExpression, context:SourceContext) {
 		this.SelectExpression = expression;
 		this.context = context;
 	}
 
 	/** Starts a query over a table, which takes the first alias. */
-	public static function OverTable(table:QualifiedTableName):SelectQueryImpl {
+	public static function OverTable(table:QualifiedTableName, ?configuration:DatabaseConfiguration):SelectQueryImpl {
 		final context = new SourceContext();
-		return new SelectQueryImpl(new SelectExpression(context.AddTableSource(table)), context);
+		final query = new SelectQueryImpl(new SelectExpression(context.AddTableSource(table)), context);
+		query.Configuration = configuration;
+		return query;
+	}
+
+	/** A query derived from this one runs where this one does. */
+	function Carrying(derived:SelectQueryImpl):SelectQueryImpl {
+		derived.Configuration = Configuration;
+		return derived;
+	}
+
+	/** The rows the query answers with. Runs it, so it needs a connection to run against. */
+	public function Fetch():Array<Map<String, Dynamic>> {
+		return Runs("Fetching", "ToExpression()").Fetch(ToExpression());
+	}
+
+	function Runs(what:String, instead:String):DatabaseConfiguration {
+		if (Configuration == null) {
+			RowCount.NeedsAConnection(what, instead);
+		}
+		return Configuration;
 	}
 
 	/**
@@ -134,7 +160,7 @@ class SelectQueryImpl {
 			return this;
 		}
 		final nested = new SourceContext();
-		return new SelectQueryImpl(new SelectExpression(nested.AddQuerySource(SelectExpression)), nested);
+		return Carrying(new SelectQueryImpl(new SelectExpression(nested.AddQuerySource(SelectExpression)), nested));
 	}
 
 	/** What `GroupByGroupingSets` compiles down to. */
@@ -171,7 +197,7 @@ class SelectQueryImpl {
 		anchor.Unions.push(new UnionSqlExpression(UnionAll, member.ToExpression()));
 
 		final context = new SourceContext();
-		return new SelectQueryImpl(new SelectExpression(context.AddQuerySource(anchor)), context);
+		return Carrying(new SelectQueryImpl(new SelectExpression(context.AddQuerySource(anchor)), context));
 	}
 
 	/** `-- above` before the statement and `-- below` after it — `WithComments`. */
@@ -259,7 +285,7 @@ class SelectQueryImpl {
 		final body = ToExpression().Fork();
 		body.Unions.push(new UnionSqlExpression(type, other.ToExpression()));
 		final context = new SourceContext();
-		return new SelectQueryImpl(new SelectExpression(context.AddQuerySource(body)), context);
+		return Carrying(new SelectQueryImpl(new SelectExpression(context.AddQuerySource(body)), context));
 	}
 
 	public function HavingCondition(condition:ISqlExpression):SelectQueryImpl {
@@ -308,7 +334,7 @@ class SelectQueryImpl {
 
 		final expression = SelectExpression.Fork();
 		AndWhere(expression, new ExistsSqlExpression(subquery, negate));
-		return new SelectQueryImpl(expression, context);
+		return Carrying(new SelectQueryImpl(expression, context));
 	}
 
 	public function DistinctRows():SelectQueryImpl {
@@ -367,7 +393,7 @@ class SelectQueryImpl {
 		projected.Selection = context.Resolve(selection);
 
 		final context = new SourceContext();
-		return new SelectQueryImpl(new SelectExpression(context.AddQuerySource(projected, true)), context);
+		return Carrying(new SelectQueryImpl(new SelectExpression(context.AddQuerySource(projected, true)), context));
 	}
 
 	public function JoinTable(type:JoinType, table:IQueryTable, ?on:ISqlExpression):SelectQueryImpl {
@@ -394,7 +420,7 @@ class SelectQueryImpl {
 		if (Std.downcast(cast resolved, codequery.sqlexpressions.AllColumnsSqlExpression) != null) {
 			final expression = SelectExpression.Fork();
 			expression.Selection = resolved;
-			return new SelectQueryImpl(expression, context.Fork());
+			return Carrying(new SelectQueryImpl(expression, context.Fork()));
 		}
 		final projection = Std.downcast(cast resolved, ProjectionSqlExpression);
 		if (projection == null) {
@@ -413,13 +439,13 @@ class SelectQueryImpl {
 			reduced.RegisterProjected(member.Name, member.Expression);
 		}
 		reduced.MarkReduced();
-		return new SelectQueryImpl(expression, reduced);
+		return Carrying(new SelectQueryImpl(expression, reduced));
 	}
 
 	function Joined(type:JoinType, source:ISqlSource, on:Null<ISqlExpression>, context:SourceContext):SelectQueryImpl {
 		final expression = SelectExpression.Fork();
 		expression.Joins.push(new JoinSqlExpression(type, source, on));
-		return new SelectQueryImpl(expression, context);
+		return Carrying(new SelectQueryImpl(expression, context));
 	}
 
 	/**
@@ -436,12 +462,23 @@ class SelectQueryImpl {
 
 	/** How many rows the query has. Runs the query, so it needs a connection to run it against. */
 	public function Count():Int {
-		return RowCount.Unavailable();
+		if (Configuration == null) {
+			return RowCount.Unavailable();
+		}
+		final rows = Configuration.Fetch(CountExpression());
+		if (rows.length == 0) {
+			return 0;
+		}
+		// One row of one column, whatever the driver calls it.
+		for (value in rows[0]) {
+			return Std.parseInt(Std.string(value));
+		}
+		return 0;
 	}
 
 	function Fork(addClause:SelectExpression->Void):SelectQueryImpl {
 		final expression = SelectExpression.Fork();
 		addClause(expression);
-		return new SelectQueryImpl(expression, context.Fork());
+		return Carrying(new SelectQueryImpl(expression, context.Fork()));
 	}
 }

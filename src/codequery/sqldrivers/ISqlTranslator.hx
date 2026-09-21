@@ -24,4 +24,7 @@ interface ISqlTranslator {
 
 	/** A schema change expression as DDL; `pretty` lays a CREATE TABLE out one column a line. */
 	function ToDdlSql(change:codequery.sqlexpressions.SchemaChangeExpression, pretty:Bool = false):String;
+
+	/** The table the migration runner records what it has applied in, as this dialect creates it. */
+	function MigrationHistoryDdl(table:String):String;
 }

@@ -1,0 +1,115 @@
+version: 1
+tables:
+- name: booking
+  columns:
+  - name: id
+    type: Int
+    nullable: false
+    autoIncrement: true
+  - name: unitId
+    type: Int
+    nullable: false
+  - name: guestId
+    type: Int
+    nullable: false
+  - name: checkIn
+    type: DateTime
+    nullable: false
+  - name: checkOut
+    type: DateTime
+    nullable: false
+  - name: status
+    type: Int
+    nullable: false
+  - name: totalCents
+    type: Int
+    nullable: false
+  - name: refundCents
+    type: Int
+    nullable: false
+  - name: price_type
+    type: Int
+    nullable: false
+  - name: price_forex
+    type: Double
+    nullable: false
+  - name: price_zar
+    type: Double
+    nullable: false
+  constraints:
+  - kind: PrimaryKey
+    name: PK_booking
+    columns:
+    - id
+- name: guest
+  columns:
+  - name: id
+    type: Int
+    nullable: false
+    autoIncrement: true
+  - name: name
+    type: VarChar
+    nullable: false
+    maxLength: 120
+  - name: email
+    type: Text
+    nullable: true
+  constraints:
+  - kind: PrimaryKey
+    name: PK_guest
+    columns:
+    - id
+- name: parts
+  columns:
+  - name: id
+    type: Int
+    nullable: false
+    autoIncrement: true
+  - name: eng_part_no
+    type: VarChar
+    nullable: true
+    maxLength: 64
+  - name: supplier_part_no
+    type: VarChar
+    nullable: true
+    maxLength: 64
+  - name: manufacturer_part_no
+    type: VarChar
+    nullable: true
+    maxLength: 64
+  - name: description
+    type: Text
+    nullable: true
+  constraints:
+  - kind: PrimaryKey
+    name: PK_parts
+    columns:
+    - id
+- name: unit
+  columns:
+  - name: id
+    type: Int
+    nullable: false
+    autoIncrement: true
+  - name: name
+    type: VarChar
+    nullable: false
+    maxLength: 120
+  - name: sleeps
+    type: Int
+    nullable: false
+  - name: baseRateCents
+    type: Int
+    nullable: false
+  - name: cleaningFeeCents
+    type: Int
+    nullable: false
+  constraints:
+  - kind: PrimaryKey
+    name: PK_unit
+    columns:
+    - id
+views:
+- name: vw_availability_gaps
+  select: "SELECT t0.unitId AS unitId, t0.id AS bookingId, t0.checkOut AS gapStart FROM booking AS t0 WHERE t0.status = 1"
+  strategy: CreateOrReplace

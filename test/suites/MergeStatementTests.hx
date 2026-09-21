@@ -56,6 +56,7 @@ class MergeStatementTests extends TestCase {
 	}
 
 	function testMySqlAndSqlite_Throw() {
-		Assert.skip("MySqlSqlDriver/SqliteSqlDriver: no MySQL or SQLite dialect in this port to refuse a MERGE");
+		Assert.throws(() -> new codequery.mysql.MySqlSqlTranslator().ToSql(BuildMerge()));
+		Assert.skip("SqliteSqlDriver: no SQLite dialect in this port for the second half");
 	}
 }

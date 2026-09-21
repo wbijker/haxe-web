@@ -367,7 +367,7 @@ class MigrationRunner {
 	}
 
 	function EnsureTable():Void {
-		config.Execute(Raw('CREATE TABLE IF NOT EXISTS $Table (name TEXT PRIMARY KEY)'));
+		config.Execute(Raw(config.Driver.MigrationHistoryDdl(Table)));
 	}
 
 	/** A migration is a script; what runs it takes one statement at a time. */

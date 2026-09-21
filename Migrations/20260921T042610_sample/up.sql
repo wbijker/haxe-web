@@ -1,0 +1,6 @@
+CREATE TABLE guest (id INT NOT NULL AUTO_INCREMENT, name VARCHAR(120) NOT NULL, email TEXT, CONSTRAINT PK_guest PRIMARY KEY (id));
+CREATE TABLE unit (id INT NOT NULL AUTO_INCREMENT, name VARCHAR(120) NOT NULL, sleeps INT NOT NULL, baseRateCents INT NOT NULL, cleaningFeeCents INT NOT NULL, CONSTRAINT PK_unit PRIMARY KEY (id));
+CREATE TABLE booking (id INT NOT NULL AUTO_INCREMENT, unitId INT NOT NULL, guestId INT NOT NULL, checkIn DATETIME NOT NULL, checkOut DATETIME NOT NULL, status INT NOT NULL, totalCents INT NOT NULL, refundCents INT NOT NULL, price_type INT NOT NULL, price_forex DOUBLE NOT NULL, price_zar DOUBLE NOT NULL, CONSTRAINT PK_booking PRIMARY KEY (id));
+CREATE TABLE parts (id INT NOT NULL AUTO_INCREMENT, eng_part_no VARCHAR(64), supplier_part_no VARCHAR(64), manufacturer_part_no VARCHAR(64), description TEXT, CONSTRAINT PK_parts PRIMARY KEY (id));
+CREATE OR REPLACE VIEW vw_availability_gaps AS
+SELECT t0.unitId AS unitId, t0.id AS bookingId, t0.checkOut AS gapStart FROM booking AS t0 WHERE t0.status = 1;

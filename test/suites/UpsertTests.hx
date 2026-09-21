@@ -42,11 +42,13 @@ class UpsertTests extends TestCase {
 	}
 
 	function testMySql_UsesOnDuplicateKeyUpdate() {
-		Assert.skip("MySqlSqlDriver: no MySQL dialect in this port");
+		final sql = new codequery.mysql.MySqlSqlTranslator().ToSql(Insert(DoUpdate));
+		Assert.contains("ON DUPLICATE KEY UPDATE Title = VALUES(Title), Price = VALUES(Price)", sql);
 	}
 
 	function testMySql_DoNothing_IsNoOpSelfAssign() {
-		Assert.skip("MySqlSqlDriver: no MySQL dialect in this port");
+		final sql = new codequery.mysql.MySqlSqlTranslator().ToSql(Insert(DoNothing));
+		Assert.contains("ON DUPLICATE KEY UPDATE Isbn = Isbn", sql);
 	}
 
 	function testSqlServer_RendersMerge() {

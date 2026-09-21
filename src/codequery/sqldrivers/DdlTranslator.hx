@@ -97,7 +97,7 @@ class DdlTranslator {
 			parts.push({sql: Constraint(c), note: null});
 		}
 		final ifNotExists = e.IfNotExists ? "IF NOT EXISTS " : "";
-		final kind = e.Temporary ? "TEMPORARY " : (e.Unlogged ? "UNLOGGED " : "");
+		final kind = translator.TableModifierKeyword(e);
 		final core = 'CREATE ${kind}TABLE $ifNotExists${Table(e.TableName, e.Schema)} ${Wrap(Body(parts))}';
 		return e.Partition == null ? core : Partitioned(core, e, e.Partition);
 	}
@@ -169,15 +169,16 @@ class DdlTranslator {
 		if (column.Collation != null && column.Collation != "") {
 			parts.push('COLLATE ${column.Collation}');
 		}
-		if (column.IsAutoIncrement) {
-			switch column.Identity {
-				case Always: parts.push("GENERATED ALWAYS AS IDENTITY");
-				// A SERIAL is a type rather than a clause; BY DEFAULT is what a key is, and goes unsaid.
-				case Serial | ByDefault:
-			}
+		final identity = column.IsAutoIncrement ? translator.IdentityClause(column) : null;
+		// PostgreSQL says the identity before the nullability; MySQL its AUTO_INCREMENT after it.
+		if (identity != null && !translator.IdentityAfterNullability) {
+			parts.push(identity);
 		}
 		if (!column.IsNullable) {
 			parts.push("NOT NULL");
+		}
+		if (identity != null && translator.IdentityAfterNullability) {
+			parts.push(identity);
 		}
 		if (column.DefaultValue != null) {
 			parts.push('DEFAULT ${Default(column.DefaultValue)}');
@@ -202,11 +203,9 @@ class DdlTranslator {
 	/** The column's type as the dialect names it, with the length or precision the column gives it. */
 	public function TypeName(column:ColumnDefinition):String {
 		if (column.IsAutoIncrement && column.Identity == Serial) {
-			return switch column.Type {
-				case SqlSmallInt: "SMALLSERIAL";
-				case SqlBigInt: "BIGSERIAL";
-				case SqlInt: "SERIAL";
-				case t: throw 'Column "${column.Name}" is ${Std.string(t)}; SERIAL is an integer column only (SMALLSERIAL, SERIAL, BIGSERIAL).';
+			final serial = translator.SerialTypeName(column);
+			if (serial != null) {
+				return serial;
 			}
 		}
 		return switch column.Type {

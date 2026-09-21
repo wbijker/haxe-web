@@ -68,6 +68,7 @@ class DatabaseInitializer {
 		for (table in SchemaMembers.TablesOf(cls)) {
 			final field = table.field.name;
 			statements.push(macro __db.$field.ApplyConfiguration(__snapshot));
+			statements.push(macro __db.$field.AttachTo(__db));
 		}
 		// A partition declared as a member of its own is folded into its entity's table.
 		for (partition in SchemaMembers.PartitionsOf(cls)) {

@@ -23,6 +23,10 @@ class SqlCastExpressionTests extends TestCase {
 		return new SqlTranslator().RenderExpression(new SqlCastExpression(value(), type));
 	}
 
+	static function mysql(type:SqlType):String {
+		return new codequery.mysql.MySqlSqlTranslator().RenderExpression(new SqlCastExpression(value(), type));
+	}
+
 	// ---- each dialect's own spelling ---------------------------------------------------------------
 
 	function testPostgres_Int() {
@@ -98,39 +102,39 @@ class SqlCastExpressionTests extends TestCase {
 	}
 
 	function testMySql_Int() {
-		Assert.skip("MySqlSqlDriver: no MySQL dialect in this port");
+		Assert.equals("CAST(1 AS SIGNED)", mysql(SqlInt));
 	}
 
 	function testMySql_BigInt() {
-		Assert.skip("MySqlSqlDriver: no MySQL dialect in this port");
+		Assert.equals("CAST(1 AS SIGNED)", mysql(SqlBigInt));
 	}
 
 	function testMySql_SmallInt() {
-		Assert.skip("MySqlSqlDriver: no MySQL dialect in this port");
+		Assert.equals("CAST(1 AS SIGNED)", mysql(SqlSmallInt));
 	}
 
 	function testMySql_Double() {
-		Assert.skip("MySqlSqlDriver: no MySQL dialect in this port");
+		Assert.equals("CAST(1 AS DOUBLE)", mysql(SqlFloat));
 	}
 
 	function testMySql_Float() {
-		Assert.skip("MySqlSqlDriver: no MySQL dialect in this port");
+		Assert.equals("CAST(1 AS FLOAT)", mysql(SqlReal));
 	}
 
 	function testMySql_Decimal() {
-		Assert.skip("MySqlSqlDriver: no MySQL dialect in this port");
+		Assert.equals("CAST(1 AS DECIMAL(10, 2))", mysql(SqlDecimal(10, 2)));
 	}
 
 	function testMySql_VarChar() {
-		Assert.skip("MySqlSqlDriver: no MySQL dialect in this port");
+		Assert.equals("CAST(1 AS CHAR)", mysql(SqlText));
 	}
 
 	function testMySql_Boolean() {
-		Assert.skip("MySqlSqlDriver: no MySQL dialect in this port");
+		Assert.equals("CAST(1 AS UNSIGNED)", mysql(SqlBool));
 	}
 
 	function testMySql_DateTime() {
-		Assert.skip("MySqlSqlDriver: no MySQL dialect in this port");
+		Assert.equals("CAST(1 AS DATETIME)", mysql(SqlTimestamp));
 	}
 
 	function testSqlite_Int() {

@@ -28,7 +28,7 @@ class ReturningTests extends TestCase {
 	}
 
 	function testMySql_Delete_Throws() {
-		Assert.skip("MySqlSqlDriver: no MySQL dialect in this port");
+		Assert.throws(() -> new codequery.mysql.MySqlSqlTranslator().ToSql(DeleteWithReturning()));
 	}
 
 	function testSqlite_Delete_Returning_RoundTrips() {

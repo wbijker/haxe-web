@@ -35,7 +35,24 @@ This builds twice from the same source:
    step, so there is no artifact.
 2. **PHP** — generated into `bin/php/`, then run via `--cmd php bin/php/index.php`.
 
-Both print the same thing.
+Both render the same statements. The PHP one also runs them: `SampleDbInitializer`
+builds `SampleDb` over the MySQL driver, and on PHP the driver connects through
+PDO (`pdo_mysql`), scaffolds a migration into `Migrations/` if the entities have
+drifted from the last snapshot, applies what is pending, and executes the sample.
+Every other target has no MySQL client, so there the configuration renders only.
+
+The sample expects MySQL at `127.0.0.1:3306`, database `codequery_sample`, user
+`docker`/`docker`:
+
+```sh
+docker run -d --name codequery-sample-mysql \
+  -e MYSQL_ROOT_PASSWORD=docker -e MYSQL_DATABASE=codequery_sample \
+  -e MYSQL_USER=docker -e MYSQL_PASSWORD=docker -p 3306:3306 \
+  mysql:8.0 --default-authentication-plugin=mysql_native_password
+```
+
+(`mysql_native_password` because this PHP's `mysqlnd` cannot answer MySQL 8's
+default `caching_sha2_password`.)
 
 ## Layout
 

@@ -2,6 +2,7 @@ package sample;
 
 import codequery.DbTable;
 import codequery.DbView;
+import codequery.IDbSchema;
 
 /**
 	The sample schema, ported from `CodeQuery.Sample.SampleDb`: a small vacation-booking schema —
@@ -9,9 +10,9 @@ import codequery.DbView;
 
 	The C# original also declares a view, two functions and two stored procedures. Those need
 	`DbView`, `DbFunction` and `DbStoredProc`, none of which this port has, so the tables are what
-	is here.
+	is here. A live instance is built by `SampleDbInitializer`.
 **/
-class SampleDb {
+class SampleDb implements IDbSchema {
 	public final Guests:DbTable<Guest> = DbTable.of();
 	public final Units:DbTable<Unit> = DbTable.of();
 	public final Bookings:DbTable<Booking> = DbTable.of();

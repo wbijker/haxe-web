@@ -39,7 +39,12 @@ class ConnectionStringConfigurationTests extends TestCase {
 	}
 
 	function testMySql_TypedParts_FormatCommonOptions() {
-		Assert.skip("MySqlSqlDriver.BuildConnectionString: no MySQL dialect driver in this port");
+		// C# names its arguments; the ones left out here are the pool sizes and the connection timeout.
+		final connectionString = codequery.mysql.MySqlSqlDriver.BuildConnectionString("localhost", "app", "user", "secret", 3306,
+			"Required", "utf8mb4", true, null, null, null, 60);
+
+		Assert.equals("Server=localhost;Port=3306;Database=app;Uid=user;Pwd=secret;"
+			+ "SslMode=Required;CharSet=utf8mb4;Pooling=true;DefaultCommandTimeout=60", connectionString);
 	}
 
 	function testSqlServer_WithoutUsername_KeepsIntegratedSecurity() {
