@@ -19,7 +19,7 @@ class Widget {
 /** `SqlTreeSerializerTests.cs`: a statement's native structure, written and read back. */
 class SqlTreeSerializerTests extends TestCase {
 	static function Widgets():DbTable<Widget> {
-		return new DbTable<Widget>(new QualifiedTableName("Widget"));
+		return codequery.Query.table(Widget, "Widget");
 	}
 
 	function testView_SelectExpression_RoundTrips_Structurally_And_ToSameSql() {

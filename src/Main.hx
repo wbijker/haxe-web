@@ -16,6 +16,16 @@ class Main {
 		// Scaffold a migration if the schema has drifted, then apply whatever is outstanding.
 		SampleDbInitializer.Migrate(db);
 
+		var rows = db.Bookings.From()
+		.Where(b -> b.price.zar > 100)
+		.Select(b -> {
+			price: b.price.zar,
+			id: b.id,
+			another: b.totalCents
+		}).Select(b -> {
+			pp: b.price + b.id + b.another
+		}).Fetch();
+
 		db.Bookings.Update()
 			.Where(f -> f.price.zar > 100)
 			.Set(g -> g.price.zar, g -> g.price.zar * 1.15)

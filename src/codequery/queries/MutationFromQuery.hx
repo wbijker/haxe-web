@@ -24,16 +24,17 @@ class MutationFromQuery {
 		}
 		final entity = Context.getType(name);
 		final rows = [entity, ExpressionConverter.EntityOf(self)];
-		final on = ExpressionConverter.Convert(condition, rows);
+		final on = ExpressionConverter.ConvertCallback(condition, rows);
 		final table = macro new codequery.QualifiedTableName($v{ColumnsBuilder.TableNameOfType(entity)});
-		final source = macro(cast $self : codequery.queries.SelectQueryImpl).ToExpression();
+		final shape = ExpressionConverter.ShapeOf(entity);
+		final source = macro(cast $self : codequery.queries.SelectQueryImpl);
 
 		final queryType = TPath({
 			pack: ["codequery", "queries"],
 			name: "IDeleteQuery2",
 			params: [for (row in rows) TPType(row.toComplexType())]
 		});
-		return macro(cast codequery.queries.MutationQueryImpl.DeletingUsing($table, $source).WhereCondition($on) : $queryType);
+		return macro(cast codequery.queries.MutationQueryImpl.DeletingUsing($table, $source, $shape).Where($on) : $queryType);
 	}
 	#end
 }

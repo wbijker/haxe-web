@@ -1,7 +1,9 @@
 package codequery.queries;
 
+import codequery.RowShape;
 import codequery.execution.DatabaseConfiguration;
 import codequery.sqlexpressions.BinarySqlExpression;
+import codequery.sqlexpressions.RowProjection;
 import codequery.sqlexpressions.ISqlExpression;
 import codequery.sqlexpressions.ISqlSource;
 import codequery.sqlexpressions.JoinSqlExpression;
@@ -36,6 +38,13 @@ import codequery.sqlexpressions.TableSqlSource;
 	building the statement needs no generics at all and there is one of this rather than eight.
 
 	Every clause answers with a query of its own; the one it was asked of is unchanged.
+
+	A clause written as a lambda — `Where(b -> b.price.zar > 100)` — is compiled to a callback over
+	the rows' columns, `b -> Expr.greaterThan(b.price.zar, Expr.constInt(100))`, and the method of
+	the same name here (`Where`, `Select`, `OrderBy` …) is what such a callback is handed to: each
+	calls it with the columns of every row the query is over and adds what it answers with. The
+	longer-named ones (`WhereCondition`, `SelectProjection` …) take the expression itself, for a
+	clause built without a lambda.
 **/
 class SelectQueryImpl {
 	public final SelectExpression:SelectExpression;
@@ -43,20 +52,28 @@ class SelectQueryImpl {
 	final context:SourceContext;
 
 	/**
+		One per row the query is over, in the order a lambda's parameters name them: how each hands
+		its columns to a callback, and how a fetched row is read back as it.
+	**/
+	public final Rows:Array<RowShape>;
+
+	/**
 		Where the query runs, where it was begun on a table that knows — a table of a schema built
 		by `DatabaseInitializer.Build(…, configuration)`. Null for a query that only renders.
 	**/
 	public var Configuration:Null<DatabaseConfiguration>;
 
-	public function new(expression:SelectExpression, context:SourceContext) {
+	public function new(expression:SelectExpression, context:SourceContext, ?rows:Array<RowShape>) {
 		this.SelectExpression = expression;
 		this.context = context;
+		this.Rows = rows == null ? [] : rows;
 	}
 
 	/** Starts a query over a table, which takes the first alias. */
-	public static function OverTable(table:QualifiedTableName, ?configuration:DatabaseConfiguration):SelectQueryImpl {
+	public static function OverTable(table:QualifiedTableName, ?configuration:DatabaseConfiguration, ?shape:RowShape):SelectQueryImpl {
 		final context = new SourceContext();
-		final query = new SelectQueryImpl(new SelectExpression(context.AddTableSource(table)), context);
+		final row = shape != null ? shape : RowShape.Unshaped('the table ${table.Name}');
+		final query = new SelectQueryImpl(new SelectExpression(context.AddTableSource(table)), context, [row]);
 		query.Configuration = configuration;
 		return query;
 	}
@@ -67,9 +84,83 @@ class SelectQueryImpl {
 		return derived;
 	}
 
-	/** The rows the query answers with. Runs it, so it needs a connection to run against. */
-	public function Fetch():Array<Map<String, Dynamic>> {
+	/** The rows the query answers with, as the driver sent them. Runs it, so it needs a connection to run against. */
+	public function FetchRows():Array<Map<String, Dynamic>> {
 		return Runs("Fetching", "ToExpression()").Fetch(ToExpression());
+	}
+
+	/**
+		The rows the query answers with, read back as the values its row type promises: an entity
+		for a query over a table, the structure a projection built, the one value a lone expression
+		selects. A query over several rows, not yet projected to one, answers as the driver sent it.
+	**/
+	public function Fetch():Array<Dynamic> {
+		final rows = FetchRows();
+		if (Rows.length != 1) {
+			return cast rows;
+		}
+		final read = Rows[0].Read;
+		return rows.map(read);
+	}
+
+	/** What a callback over this query's rows answers with. */
+	function Call(callback:Dynamic):Dynamic {
+		return RowShape.Call(callback, Rows);
+	}
+
+	/** `WHERE <predicate>`, the predicate a callback over the rows' columns. */
+	public function Where(predicate:Dynamic):SelectQueryImpl {
+		return WhereCondition(Call(predicate));
+	}
+
+	/** `ORDER BY <key>`, the key a callback over the rows' columns. */
+	public function OrderBy(key:Dynamic, ascending:Bool = true, nulls:NullsOrdering = Default):SelectQueryImpl {
+		return OrderByKey(Call(key), ascending, nulls);
+	}
+
+	/** `DISTINCT ON (<key>)`, the key a callback over the rows' columns. */
+	public function DistinctOn(key:Dynamic):SelectQueryImpl {
+		return DistinctOnKey(Call(key));
+	}
+
+	/** `GROUP BY <keys>`: a callback answering with one key, or a structure of several. */
+	public function GroupBy(keys:Dynamic, mode:GroupingMode = None):SelectQueryImpl {
+		return GroupByKeys(RowProjection.Keys(Call(keys)), mode);
+	}
+
+	/** One grouping set: a callback answering with one key, a structure of several, or nothing. */
+	public function GroupBySet(keys:Dynamic):SelectQueryImpl {
+		return GroupBySetKeys(RowProjection.Keys(Call(keys)));
+	}
+
+	/**
+		`SELECT <projection>`: a callback answering with the shape the query is to answer with — a
+		structure of expressions, a whole row, or one expression — and a query of that shape.
+	**/
+	public function Select(projection:Dynamic):SelectQueryImpl {
+		return SelectProjection(RowProjection.Selection(Call(projection)));
+	}
+
+	/** `Reduce`: a callback folding the rows into one structure, kept in place. */
+	public function Reduce(projection:Dynamic):SelectQueryImpl {
+		return ReduceTo(RowProjection.Selection(Call(projection)));
+	}
+
+	/** A join to a table, its condition a callback over every row the query then has. */
+	public function JoinTable(type:JoinType, table:IQueryTable, ?on:Dynamic):SelectQueryImpl {
+		final rows = Rows.concat([table.Shape]);
+		return JoinTableOn(type, table, on == null ? null : RowShape.Call(on, rows));
+	}
+
+	/** A join to another query, its condition a callback over every row the query then has. */
+	public function JoinQuery(type:JoinType, source:SelectQueryImpl, ?on:Dynamic):SelectQueryImpl {
+		final rows = Rows.concat([source.AsRow()]);
+		return JoinQueryOn(type, source, on == null ? null : RowShape.Call(on, rows));
+	}
+
+	/** The one row this query is, where it is joined to or selected from. */
+	public function AsRow():RowShape {
+		return Rows.length == 1 ? Rows[0] : RowShape.Unshaped("a query over several rows");
 	}
 
 	function Runs(what:String, instead:String):DatabaseConfiguration {
@@ -160,11 +251,11 @@ class SelectQueryImpl {
 			return this;
 		}
 		final nested = new SourceContext();
-		return Carrying(new SelectQueryImpl(new SelectExpression(nested.AddQuerySource(SelectExpression)), nested));
+		return Carrying(new SelectQueryImpl(new SelectExpression(nested.AddQuerySource(SelectExpression)), nested, Rows));
 	}
 
 	/** What `GroupByGroupingSets` compiles down to. */
-	public function GroupBySet(keys:Array<ISqlExpression>):SelectQueryImpl {
+	public function GroupBySetKeys(keys:Array<ISqlExpression>):SelectQueryImpl {
 		final keys = keys.map(context.Resolve);
 		return Fork(expression -> {
 			expression.GroupingSets.push(keys);
@@ -197,7 +288,7 @@ class SelectQueryImpl {
 		anchor.Unions.push(new UnionSqlExpression(UnionAll, member.ToExpression()));
 
 		final context = new SourceContext();
-		return Carrying(new SelectQueryImpl(new SelectExpression(context.AddQuerySource(anchor)), context));
+		return Carrying(new SelectQueryImpl(new SelectExpression(context.AddQuerySource(anchor)), context, Rows));
 	}
 
 	/** `-- above` before the statement and `-- below` after it — `WithComments`. */
@@ -285,7 +376,7 @@ class SelectQueryImpl {
 		final body = ToExpression().Fork();
 		body.Unions.push(new UnionSqlExpression(type, other.ToExpression()));
 		final context = new SourceContext();
-		return Carrying(new SelectQueryImpl(new SelectExpression(context.AddQuerySource(body)), context));
+		return Carrying(new SelectQueryImpl(new SelectExpression(context.AddQuerySource(body)), context, Rows));
 	}
 
 	public function HavingCondition(condition:ISqlExpression):SelectQueryImpl {
@@ -304,10 +395,12 @@ class SelectQueryImpl {
 			?frame:codequery.sqlexpressions.WindowFrame):SelectQueryImpl {
 		final partitionBy = partitionBy.map(context.Resolve);
 		final orderBy = orderBy.map(term -> (cast context.Resolve(term) : OrderByExpression));
-		return Fork(expression -> {
-			final given = name != null ? name : (expression.Windows.length == 0 ? "w" : "w" + expression.Windows.length);
-			expression.Windows.push(new NamedWindowSqlSource(given, partitionBy, orderBy, frame));
-		});
+		final expression = SelectExpression.Fork();
+		final given = name != null ? name : (expression.Windows.length == 0 ? "w" : "w" + expression.Windows.length);
+		final window = new NamedWindowSqlSource(given, partitionBy, orderBy, frame);
+		expression.Windows.push(window);
+		// The window arrives as one more row, which is how a projection afterwards names it.
+		return Carrying(new SelectQueryImpl(expression, context.Fork(), Rows.concat([RowShape.Window(window)])));
 	}
 
 	/** The window among a statement's sources at `index`, which is how a projection names one. */
@@ -334,7 +427,7 @@ class SelectQueryImpl {
 
 		final expression = SelectExpression.Fork();
 		AndWhere(expression, new ExistsSqlExpression(subquery, negate));
-		return Carrying(new SelectQueryImpl(expression, context));
+		return Carrying(new SelectQueryImpl(expression, context, Rows));
 	}
 
 	public function DistinctRows():SelectQueryImpl {
@@ -392,20 +485,22 @@ class SelectQueryImpl {
 		final projected = SelectExpression.Fork();
 		projected.Selection = context.Resolve(selection);
 
+		// The query answered with is over the one row the projection built, whatever this one was over.
 		final context = new SourceContext();
-		return Carrying(new SelectQueryImpl(new SelectExpression(context.AddQuerySource(projected, true)), context));
+		return Carrying(new SelectQueryImpl(new SelectExpression(context.AddQuerySource(projected, true)), context,
+			[RowShape.OfSelection(selection, Rows)]));
 	}
 
-	public function JoinTable(type:JoinType, table:IQueryTable, ?on:ISqlExpression):SelectQueryImpl {
+	public function JoinTableOn(type:JoinType, table:IQueryTable, ?on:ISqlExpression):SelectQueryImpl {
 		final context = this.context.Fork();
-		return Joined(type, context.AddTableSource(table.Table), context.Resolve(on), context);
+		return Joined(type, context.AddTableSource(table.Table), context.Resolve(on), context, table.Shape);
 	}
 
-	public function JoinQuery(type:JoinType, source:SelectQueryImpl, ?on:ISqlExpression):SelectQueryImpl {
+	public function JoinQueryOn(type:JoinType, source:SelectQueryImpl, ?on:ISqlExpression):SelectQueryImpl {
 		final context = this.context.Fork();
 		// Kept as the query it is, as C# keeps it; the translator renders a query that only reads a
 		// table as that table.
-		return Joined(type, context.AddQuerySource(source.ToExpression()), context.Resolve(on), context);
+		return Joined(type, context.AddQuerySource(source.ToExpression()), context.Resolve(on), context, source.AsRow());
 	}
 
 	/**
@@ -420,7 +515,7 @@ class SelectQueryImpl {
 		if (Std.downcast(cast resolved, codequery.sqlexpressions.AllColumnsSqlExpression) != null) {
 			final expression = SelectExpression.Fork();
 			expression.Selection = resolved;
-			return Carrying(new SelectQueryImpl(expression, context.Fork()));
+			return Carrying(new SelectQueryImpl(expression, context.Fork(), [RowShape.OfSelection(resolved, Rows)]));
 		}
 		final projection = Std.downcast(cast resolved, ProjectionSqlExpression);
 		if (projection == null) {
@@ -439,13 +534,14 @@ class SelectQueryImpl {
 			reduced.RegisterProjected(member.Name, member.Expression);
 		}
 		reduced.MarkReduced();
-		return Carrying(new SelectQueryImpl(expression, reduced));
+		return Carrying(new SelectQueryImpl(expression, reduced, [RowShape.OfSelection(selection, Rows)]));
 	}
 
-	function Joined(type:JoinType, source:ISqlSource, on:Null<ISqlExpression>, context:SourceContext):SelectQueryImpl {
+	function Joined(type:JoinType, source:ISqlSource, on:Null<ISqlExpression>, context:SourceContext, row:RowShape):SelectQueryImpl {
 		final expression = SelectExpression.Fork();
 		expression.Joins.push(new JoinSqlExpression(type, source, on));
-		return Carrying(new SelectQueryImpl(expression, context));
+		// The joined source brings a row, named by the next lambda parameter.
+		return Carrying(new SelectQueryImpl(expression, context, Rows.concat([row])));
 	}
 
 	/**
@@ -479,6 +575,6 @@ class SelectQueryImpl {
 	function Fork(addClause:SelectExpression->Void):SelectQueryImpl {
 		final expression = SelectExpression.Fork();
 		addClause(expression);
-		return Carrying(new SelectQueryImpl(expression, context.Fork()));
+		return Carrying(new SelectQueryImpl(expression, context.Fork(), Rows));
 	}
 }

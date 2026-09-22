@@ -26,30 +26,30 @@ class MutationQueryExtensions {
 		if (spread != null) {
 			var assigned = Impl(self);
 			for (each in spread) {
-				assigned = macro $assigned.SetColumn(${each.column}, ${each.value});
+				assigned = macro $assigned.Set(${each.column}, ${each.value});
 			}
 			return ExpressionConverter.AnsweringMutation(assigned, self);
 		}
 		// A column is assigned on the target, so it names that row alone; what it is assigned may
 		// name every row the statement has.
-		final target = ExpressionConverter.ConvertColumn(column, [rows[0]]);
-		final assigned = ExpressionConverter.ConvertValue(value, rows);
-		return ExpressionConverter.AnsweringMutation(macro ${Impl(self)}.SetColumn($target, $assigned), self);
+		final target = ExpressionConverter.ConvertColumnCallback(column, [rows[0]]);
+		final assigned = ExpressionConverter.ConvertValueCallback(value, rows);
+		return ExpressionConverter.AnsweringMutation(macro ${Impl(self)}.Set($target, $assigned), self);
 	}
 
 	/** `WHERE <predicate>`. Called again, it adds another condition with AND. */
 	public static macro function Where(self:Expr, predicate:Expr):Expr {
 		final rows = ExpressionConverter.EntitiesOf(self);
-		final condition = ExpressionConverter.Convert(predicate, rows);
-		return ExpressionConverter.AnsweringMutation(macro ${Impl(self)}.WhereCondition($condition), self);
+		final condition = ExpressionConverter.ConvertCallback(predicate, rows);
+		return ExpressionConverter.AnsweringMutation(macro ${Impl(self)}.Where($condition), self);
 	}
 
 	/** `RETURNING <projection>` — what the statement hands back for each row it touched. */
 	public static macro function Returning(self:Expr, selector:Expr):Expr {
 		final rows = ExpressionConverter.EntitiesOf(self);
-		final projected = ExpressionConverter.ConvertProjection(selector, rows);
+		final projected = ExpressionConverter.ConvertProjectionCallback(selector, rows);
 		final selection = projected.selection;
-		return ExpressionConverter.AnsweringMutation(macro ${Impl(self)}.ReturningProjection($selection), self);
+		return ExpressionConverter.AnsweringMutation(macro ${Impl(self)}.Returning($selection), self);
 	}
 
 	/** A clause only sometimes wanted, said in the chain: `.Conditional(onlyOpen, q -> q.Where(…))`. */

@@ -425,14 +425,12 @@ class LambdaCalls {
 			case TInst(t, _): t.get();
 			case t: Context.error('${t.toString()} is not an entity class', row.pos);
 		}
-		final columns = ColumnsBuilder.Of(rows[index], index);
-
 		final arms:Array<Expr> = [];
 		for (field in entity.fields.get()) {
 			if (!IsColumn(field) || IsKey(field) || !IsValue(field.type)) {
 				continue;
 			}
-			final column = ColumnsBuilder.Member(columns, field.name);
+			final column = ExpressionConverter.ColumnFor(rows[index], index, [field.name], pos);
 			final operand = IsText(field.type)
 				? column
 				: macro codequery.sqlexpressions.Expr.castTo($column, codequery.sqlexpressions.SqlType.SqlText);

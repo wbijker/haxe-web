@@ -22,8 +22,7 @@ class SampleDb implements IDbSchema {
 		The empty windows between a unit's stays. The C# original pairs each check-out with the next
 		check-in using LEAD(); this is the part of it that can be said so far.
 	**/
-	public final AvailabilityGaps:DbView<AvailabilityGap> = DbView.of(new DbTable<Booking>(
-		new codequery.QualifiedTableName("booking")).From()
+	public final AvailabilityGaps:DbView<AvailabilityGap> = DbView.of(codequery.Query.select(Booking)
 		.Where(b -> b.status == BookingStatus.Confirmed)
 		.Select(b -> {unitId: b.unitId, bookingId: b.id, gapStart: b.checkOut}));
 

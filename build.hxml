@@ -11,6 +11,7 @@
 --class-path src
 --main Main
 --php bin/php
+-D real-position
 --macro codequery.php.ChainLayout.apply()
 --cmd php bin/php/index.php
 
@@ -20,6 +21,7 @@
 --class-path src
 --main RunPhp
 --php bin/php-runtime
+-D real-position
 --macro codequery.php.ChainLayout.apply()
 --cmd php bin/php-runtime/index.php
 
@@ -29,5 +31,6 @@
 --class-path src
 --main RunMigrations
 --php bin/php-migrations
+-D real-position
 --macro codequery.php.ChainLayout.apply()
 --cmd php bin/php-migrations/index.php bin/migrations

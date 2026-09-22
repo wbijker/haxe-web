@@ -73,3 +73,5 @@ types against this port. Worked in batches of ten, top down.
 - [x] 45. A driver that runs what it renders — `ISqlTranslator` renders, `ISqlDriver` adds
   somewhere to send it, and the PHP runtime (`PhpDriver`, `PdoTranslator`, `PdoExecutor`) runs it
   through PDO. `RunPhp` is the whole port end to end against an in-memory SQLite database.
+- [x] 46. Rows read back as the row type — `Fetch()` answers with entities, or the structure a
+  projection built, each value as its column's type (`RowShape`, `RowReader`).

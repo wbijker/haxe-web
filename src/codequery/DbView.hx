@@ -30,14 +30,18 @@ class DbView<T> implements IQueryTable {
 	/** The query the view is defined by, for whatever would create it. */
 	public final Definition:Null<SelectExpression>;
 
-	public function new(table:QualifiedTableName, ?definition:SelectExpression) {
+	/** How a lambda over the view is handed its row's columns, and how a fetched row is read back. */
+	public var Shape(default, null):RowShape;
+
+	public function new(table:QualifiedTableName, ?definition:SelectExpression, ?shape:RowShape) {
 		this.Table = table;
 		this.Definition = definition;
+		this.Shape = shape != null ? shape : RowShape.Unshaped('the view ${table.Name}');
 	}
 
 	/** Begins a SELECT over this view. */
 	public function From():ISelectQuery<T> {
-		return cast SelectQueryImpl.OverTable(Table);
+		return cast SelectQueryImpl.OverTable(Table, null, Shape);
 	}
 
 	/** The view's name, unqualified. */
@@ -76,6 +80,7 @@ class DbView<T> implements IQueryTable {
 			? name
 			: macro $v{codequery.sqlexpressions.ColumnsBuilder.TableNameOfType(row)};
 		final definition = macro(cast $query : codequery.queries.SelectQueryImpl).ToExpression();
-		return macro new codequery.DbView(new codequery.QualifiedTableName($named), $definition);
+		final shape = codequery.sqlexpressions.ExpressionConverter.ShapeOf(row);
+		return macro new codequery.DbView(new codequery.QualifiedTableName($named), $definition, $shape);
 	}
 }

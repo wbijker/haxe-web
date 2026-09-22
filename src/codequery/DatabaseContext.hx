@@ -96,7 +96,9 @@ class DatabaseContext {
 		final type = haxe.macro.TypeTools.toComplexType(SchemaMembers.TypeOf(entity));
 		final path = SchemaMembers.ClassPathOf(entity);
 		final name = SchemaMembers.ClassNameOf(entity);
-		return macro new codequery.DbTable<$type>(new codequery.QualifiedTableName($self.TableNameOf($v{path}, $v{name})), $v{path});
+		final shape = codequery.sqlexpressions.ExpressionConverter.ShapeOf(SchemaMembers.TypeOf(entity));
+		return macro new codequery.DbTable<$type>(new codequery.QualifiedTableName($self.TableNameOf($v{path}, $v{name})), $v{path},
+			null, null, $shape);
 	}
 
 	public macro function From(self:Expr, entity:Expr):Expr {

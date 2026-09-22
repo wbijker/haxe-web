@@ -33,7 +33,9 @@ class Query {
 			? name
 			: macro $v{ColumnsBuilder.TableNameOfType(type)};
 		final path = TypeOf(type);
-		return macro(new codequery.DbTable<$path>(new codequery.QualifiedTableName($tableName)) : codequery.DbTable<$path>);
+		final shape = codequery.sqlexpressions.ExpressionConverter.ShapeOf(type);
+		return macro(new codequery.DbTable<$path>(new codequery.QualifiedTableName($tableName), null, null, null, $shape)
+			: codequery.DbTable<$path>);
 	}
 
 	static function EntityPath(entity:Expr):String {

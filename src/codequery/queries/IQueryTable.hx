@@ -8,4 +8,7 @@ package codequery.queries;
 interface IQueryTable {
 	/** The table, name and schema together, as every statement over it needs both. */
 	var Table(default, null):QualifiedTableName;
+
+	/** How a lambda is handed the row's columns, and how a fetched row is read back as it. */
+	var Shape(default, null):codequery.RowShape;
 }

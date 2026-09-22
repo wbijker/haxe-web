@@ -1,7 +1,9 @@
 import codequery.execution.DatabaseConfiguration;
+import codequery.migrations.DatabaseInitializer;
 import codequery.runtimes.php.PdoExecutor;
 import codequery.runtimes.php.PhpDriver;
 import sample.BookingStatus;
+import sample.SampleDb;
 
 /**
 	The port, end to end: rendered here, run by PHP, rows back.
@@ -11,9 +13,10 @@ import sample.BookingStatus;
 **/
 class RunPhp {
 	static function main() {
-		final db = new sample.SampleDb();
 		final driver = new PhpDriver("sqlite::memory:");
 		final config = DatabaseConfiguration.Of(driver);
+		// Built over the configuration, so a query's own Fetch knows where to run.
+		final db:SampleDb = DatabaseInitializer.Build(SampleDb, config);
 
 		// The schema itself is not something this port builds yet.
 		final executor:PdoExecutor = cast driver.Executor();
@@ -49,9 +52,10 @@ class RunPhp {
 		stay.totalCents = 84000;
 		config.Execute(db.Bookings.Insert(stay));
 
+		// Fetched through the query itself, the rows come back as entities.
 		Sys.println("");
-		for (row in config.Fetch(db.Guests.From().OrderBy(g -> g.name).ToExpression())) {
-			Sys.println('guest: ${row.get("name")} <${row.get("email")}>');
+		for (guest in db.Guests.From().OrderBy(g -> g.name).Fetch()) {
+			Sys.println('guest #${guest.id}: ${guest.name} <${guest.email}>');
 		}
 
 		Sys.println("");
@@ -62,8 +66,18 @@ class RunPhp {
 			.Select((b, u, g) -> {guest: g.name, unit: u.name, cents: b.totalCents});
 
 		Sys.println(config.Render(joined.ToExpression()).Sql);
-		for (row in config.Fetch(joined.ToExpression())) {
-			Sys.println('  ${row.get("guest")} at ${row.get("unit")} for ${row.get("cents")}c');
+		// A projection comes back as the structure it built, each value as its column's type.
+		for (row in joined.Fetch()) {
+			Sys.println('  ${row.guest} at ${row.unit} for ${row.cents}c (${row.cents + 1} with a cent on top)');
+		}
+
+		// The whole booking, its flattened price object rebuilt, and a value computed in the database.
+		Sys.println("");
+		for (booking in db.Bookings.From().Where(b -> b.status == BookingStatus.Confirmed).Fetch()) {
+			Sys.println('booking #${booking.id}: unit ${booking.unitId}, ${booking.totalCents}c, price object ${booking.price != null}, checks in ${booking.checkIn}');
+		}
+		for (total in db.Bookings.From().Select(b -> b.totalCents + b.refundCents).Fetch()) {
+			Sys.println('total with refunds: ${total + 0}');
 		}
 
 		Sys.println("");

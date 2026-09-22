@@ -147,6 +147,12 @@ class WindowConverter {
 					case EConst(CIdent(name)) if (bound.exists(name) && IsWindow(rows[bound[name]])): bound[name];
 					case _: Context.error("over() takes a window this query has defined, or a spec written out here", only.pos);
 				}
+				// In a callback the window arrives as the parameter naming it; inline it is read off
+				// the query being projected.
+				final parameter = ExpressionConverter.CallbackName(named);
+				if (parameter != null) {
+					return macro $aggregate.OverWindow($i{parameter});
+				}
 				if (CurrentQuery == null) {
 					Context.error("A named window can only be read in a projection", only.pos);
 				}

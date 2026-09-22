@@ -36,6 +36,28 @@ class ChainLayoutTests extends TestCase {
 			ChainLayout.Reflow("\t$a->b()->c() + $d->e()->f();"));
 	}
 
+	function testAClosureInTheChainHangsFromItsOwnLine() {
+		final generated = [
+			"\t\t$rows = Main::$db->Bookings->From()->Where(function ($b) {",
+			"\t\t\treturn Expr::gt($b->price, 1);",
+			"\t\t})->Fetch();"
+		].join("\n");
+		final laidOut = [
+			"\t\t$rows = Main::$db->Bookings",
+			"\t\t\t->From()",
+			"\t\t\t->Where(function ($b) {",
+			"\t\t\t\treturn Expr::gt($b->price, 1);",
+			"\t\t\t})",
+			"\t\t\t->Fetch();"
+		].join("\n");
+		Assert.equals(laidOut, ChainLayout.Reflow(generated));
+	}
+
+	function testAStatementSpreadOverLinesWithoutAChainIsLeftAlone() {
+		final lines = "\t\tfoo(\n\t\t\t$a,\n\t\t\t$b\n\t\t);";
+		Assert.equals(lines, ChainLayout.Reflow(lines));
+	}
+
 	function testPositionDirectivesAndCommentsAreNotCode() {
 		final line = "\t\t#src/Main.hx:19: lines 19-22 ->a()->b()";
 		Assert.equals(line, ChainLayout.Reflow(line));

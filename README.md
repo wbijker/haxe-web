@@ -61,6 +61,43 @@ default `caching_sha2_password`.)
 - `src/sql/` — the SQL expression tree and the `where()` macro
 - `build.hxml` — compiler args for both targets
 
+## What a query clause compiles to
+
+A clause written as a lambda over the entity — `Where(b -> b.price.zar > 100)`,
+`Select(b -> {price: b.price.zar, id: b.id})` — is converted while compiling, but
+it stays a function in the output: a callback over the row's *columns*, each an
+expression. The generated PHP reads as the chain that was written:
+
+```php
+$rows = Main::$db->Bookings
+	->From()
+	->Where(function ($b) {
+		return Expr::greaterThan($b->price->zar, Expr::constInt(100));
+	})
+	->Select(function ($b) {
+		return new HxAnon(["price" => $b->price->zar, "id" => $b->id]);
+	})
+	->Fetch();
+```
+
+`$b` is a `BookingColumns`, generated per entity by `ColumnsBuilder`: one member per
+column, an object flattened into the row (`price.zar`) a columns object of its own.
+The query calls the callback with the columns of each row it is over, and
+`RowProjection` flattens what a `select` answers with — a structure, a whole row,
+one expression — into the statement's selection. A structure's members come back
+in the order they were written; on the eval target, which orders an object's
+fields by name, the order is written on the structure (`RowProjection.Ordered`).
+
+`Fetch()` reads the rows back as the row type: entities for a query over a table
+(`BookingColumns.Read` rebuilds one, flattened objects included), the structure a
+projection built with each value as its column's type, the one value a lone
+expression selects. A query over several rows, not yet projected, answers as the
+driver sent it.
+
+A table has to know its row's shape to hand a lambda its columns: `DbTable.of()`,
+`Query.table(T)` and `DbView.of(…)` give it one; a `new DbTable<T>(…)` written by
+hand has none, and a lambda over it says so.
+
 ## `Query.where` — lambda to SQL, at compile time
 
 The C# equivalent of this is:

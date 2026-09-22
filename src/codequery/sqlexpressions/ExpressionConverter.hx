@@ -17,14 +17,28 @@ using haxe.macro.TypeTools;
 	runtime expression trees, so the conversion happens during compilation: the lambda never becomes
 	a closure, it becomes the code that builds the `ISqlExpression` tree the statement carries.
 
-	A column resolves to a static member of the entity's generated columns type (see
-	`ColumnsBuilder`), so what a predicate compiles to is a reference and not a column built afresh
-	on each call. Nothing in it depends on the statement it lands in, so the whole condition is built
-	where it is written — there is no closure.
+	The lambda is converted in one of two shapes. As a *callback* — what `Where`, `Select`,
+	`OrderBy` and the rest compile to — it stays a function, its parameters now the rows' columns
+	(see `ColumnsBuilder`) and its body the code building the tree: `b -> b.price.zar > 100` becomes
+	`(b:BookingColumns) -> Expr.greaterThan(b.price.zar, Expr.constInt(100))`, and the query calls it
+	with the columns of each row it is over. *Inline*, the tree is built where the lambda was
+	written, and a column names its source by the position of the parameter it was reached through
+	— the shape a subquery's reach into the row outside takes, and an aggregate's selector.
 **/
 @:allow(codequery.sqlexpressions.ProjectionBuilder)
 class ExpressionConverter {
 	#if macro
+	/**
+		The callback being converted, where one is: the names its parameters have, by row. Null
+		while converting inline, when a column is built on its parameter's position instead.
+	**/
+	static var callback:Null<{names:Array<String>}>;
+
+	/** The callback parameter standing for row `index`, or null where the conversion is inline. */
+	public static function CallbackName(index:Int):Null<String> {
+		return callback == null ? null : callback.names[index];
+	}
+
 	/**
 		Convert a predicate lambda into an expression building its `ISqlExpression`.
 
@@ -33,6 +47,11 @@ class ExpressionConverter {
 	**/
 	public static function Convert(predicate:Expr, rows:Array<Type>):Expr {
 		return ConvertLambda(predicate, rows, macro :Bool, "a predicate, e.g. a -> a.id == 12");
+	}
+
+	/** The same predicate as a callback over the rows' columns, which is what `where` is handed. */
+	public static function ConvertCallback(predicate:Expr, rows:Array<Type>):Expr {
+		return ConvertLambda(predicate, rows, macro :Bool, "a predicate, e.g. a -> a.id == 12", true);
 	}
 
 	/**
@@ -44,7 +63,12 @@ class ExpressionConverter {
 		return ConvertLambda(selector, rows, macro :Dynamic, "a key selector, e.g. a -> a.id");
 	}
 
-	static function ConvertLambda(given:Expr, rows:Array<Type>, returns:ComplexType, expected:String):Expr {
+	/** The same key selector as a callback over the rows' columns. */
+	public static function ConvertKeyCallback(selector:Expr, rows:Array<Type>):Expr {
+		return ConvertLambda(selector, rows, macro :Dynamic, "a key selector, e.g. a -> a.id", true);
+	}
+
+	static function ConvertLambda(given:Expr, rows:Array<Type>, returns:ComplexType, expected:String, asCallback:Bool = false):Expr {
 		final lambda = ResolveLambda(given);
 
 		final fn = switch lambda.expr {
@@ -65,7 +89,107 @@ class ExpressionConverter {
 		// A subquery the body writes has the outer row's columns put in before anything is typed.
 		final body = LambdaCalls.PrepareSubqueries(fn.expr, bound, rows);
 		TypeLambda({expr: EFunction(FAnonymous, {args: fn.args, ret: fn.ret, expr: body}), pos: lambda.pos}, rows, returns);
-		return ToSqlExpression(body, bound, rows);
+
+		final names = [for (arg in fn.args) arg.name];
+		final converted = Converting(asCallback ? names : null, () -> ToSqlExpression(body, bound, rows));
+		return asCallback ? Callback(names, rows, converted, lambda.pos) : converted;
+	}
+
+	/** Runs a conversion as a callback over the named parameters, or inline where there are none. */
+	static function Converting<T>(names:Null<Array<String>>, convert:() -> T):T {
+		final enclosing = callback;
+		callback = names == null ? null : {names: names};
+		final converted = try convert() catch (failed:Dynamic) {
+			callback = enclosing;
+			throw failed;
+		}
+		callback = enclosing;
+		return converted;
+	}
+
+	/**
+		The callback a converted body becomes: a function of the rows' columns, one parameter per
+		row under the name the lambda gave it, answering with the tree the body builds.
+	**/
+	public static function Callback(names:Array<String>, rows:Array<Type>, body:Expr, pos:Position):Expr {
+		final args:Array<FunctionArg> = [for (index => name in names) {name: name, type: ColumnsTypeOf(rows[index])}];
+		return {
+			expr: EFunction(FAnonymous, {args: args, ret: null, expr: {expr: EReturn(body), pos: pos}}),
+			pos: pos
+		};
+	}
+
+	/**
+		What a callback's parameter is for a row: an entity's generated columns type, a structure of
+		columns for a row a projection built, the window itself for a window, the one column for a
+		value.
+	**/
+	public static function ColumnsTypeOf(row:Type):ComplexType {
+		if (IsWindowRow(row)) {
+			return macro :codequery.sqlexpressions.NamedWindowSqlSource;
+		}
+		return switch row.follow() {
+			case TInst(_, _) if (ProjectionBuilder.IsObject(row)): ColumnsBuilder.TypeOf(row);
+			case TAnonymous(_): MemberColumnsType(row, []);
+			case _: macro :codequery.sqlexpressions.ColumnSqlExpression;
+		}
+	}
+
+	/** The columns a member holding a row is handed as: a structure of its fields' columns, however deep. */
+	static function MemberColumnsType(type:Type, visited:Array<String>):ComplexType {
+		if (!ProjectionBuilder.IsObject(type)) {
+			return macro :codequery.sqlexpressions.ColumnSqlExpression;
+		}
+		final name = type.toString();
+		if (visited.indexOf(name) >= 0) {
+			return macro :Dynamic;
+		}
+		final fields:Array<Field> = [];
+		final anonymous = IsStructure(type);
+		for (field in FieldsOf(type)) {
+			if (!anonymous && !ColumnsBuilder.IsColumn(field)) {
+				continue;
+			}
+			fields.push({
+				name: field.name,
+				pos: field.pos,
+				access: [],
+				kind: FVar(MemberColumnsType(field.type, visited.concat([name])))
+			});
+		}
+		return TAnonymous(fields);
+	}
+
+	/**
+		How a query hands a lambda the columns of a row of this type, and reads a row back as it:
+		an entity's is its columns type's; a structure's is built from its members; a value's is
+		the one column.
+	**/
+	public static function ShapeOf(row:Type):Expr {
+		if (IsWindowRow(row)) {
+			return macro codequery.RowShape.Unshaped("a window");
+		}
+		return switch row.follow() {
+			case TInst(_, _) if (ProjectionBuilder.IsObject(row)):
+				ColumnsBuilder.ShapeOf(row);
+			case TAnonymous(_):
+				final members = [
+					for (leaf in ProjectionBuilder.Leaves(row, [], []))
+						macro {
+							path: $a{leaf.fields.map(step -> macro $v{step})},
+							name: $v{leaf.names.join(ColumnsBuilder.Separator)},
+							type: ${ColumnsBuilder.SqlTypeOfType(leaf.type)}
+						}
+				];
+				macro codequery.RowShape.Structure($a{members});
+			case _:
+				macro codequery.RowShape.Scalar("", ${ColumnsBuilder.SqlTypeOfType(row)});
+		}
+	}
+
+	/** The `SqlType` a value of a Haxe type is. */
+	public static function SqlTypeExprOf(type:Type):Expr {
+		return ColumnsBuilder.SqlTypeOfType(type);
 	}
 
 	/**
@@ -378,7 +502,7 @@ class ExpressionConverter {
 		final named = [for (index in 0...windows) fn.args[index + 1].name => entities.length + index];
 		final previous = aggregateScope;
 		aggregateScope = {set: fn.args[0].name, windows: named, entities: entities, query: query};
-		final converted = ToSqlExpression(Unwrap(fn.expr), new Map(), entities);
+		final converted = Converting(null, () -> ToSqlExpression(Unwrap(fn.expr), new Map(), entities));
 		aggregateScope = previous;
 		return converted;
 	}
@@ -475,7 +599,9 @@ class ExpressionConverter {
 					{expr: ExprTools.map(e, inner -> SubstituteOuter(inner, bound, rows)).expr, pos: e.pos};
 				} else {
 					final row = rows[reached.row];
-					final column = ColumnFor(row, reached.row, reached.path, e.pos);
+					// Built on the parameter's position rather than reached through the parameter:
+					// the inner query is converted on its own, where the outer parameter is not in scope.
+					final column = InlineColumn(row, reached.row, reached.path, e.pos);
 					// Annotated with what the member holds, so the inner query still type-checks —
 					// a predicate is typed before it is read, and a column is not an Int.
 					final held = MemberTypeOf(reached.path, row, e.pos).toComplexType();
@@ -800,9 +926,9 @@ class ExpressionConverter {
 			return macro(throw $v{message} : Dynamic);
 		}
 
-		final projected = ConvertProjection(reduce, rows);
+		final projected = ConvertProjectionCallback(reduce, rows);
 		final selection = projected.selection;
-		return Answering(macro(cast $self : codequery.queries.SelectQueryImpl).ReduceTo($selection), [projected.row]);
+		return Answering(macro(cast $self : codequery.queries.SelectQueryImpl).Reduce($selection), [projected.row]);
 	}
 
 	/**
@@ -844,8 +970,9 @@ class ExpressionConverter {
 			case EField(_, _, _): new Printer().printExpr(result);
 			case _: Context.error("Name the row type the pivot answers with, e.g. .Pivot(RegionPivot, …)", result.pos);
 		});
+		final shape = ShapeOf(resultType);
 		final pivoted = macro codequery.queries.Pivoting.Apply((cast $self : codequery.queries.SelectQueryImpl),
-			$forExpr, $valueExpr, $aggregate, $list, $grouped);
+			$forExpr, $valueExpr, $aggregate, $list, $grouped, $shape);
 		return Answering(pivoted, [resultType]);
 	}
 
@@ -925,18 +1052,51 @@ class ExpressionConverter {
 	/**
 		How a column of `row` is reached, by the path of members named to get to it.
 
-		An entity's columns come from its generated statics, which carry the names its metadata
-		settles. A projection answers with an anonymous structure — no name, no package, no
-		metadata — so there is nothing to generate statics from and nothing they would say: a
-		member of one is a column of that name, built where it is used.
+		In a callback the parameter *is* the row's columns, so the path is read off it: `b.price.zar`
+		stays `b.price.zar`, now reaching a `ColumnSqlExpression`. Inline, the column is built where
+		it is used, on the position of the parameter it was reached through.
 	**/
 	static function ColumnFor(row:Type, index:Int, path:Array<String>, pos:Position):Expr {
-		final name = MemberOf(path, row, pos);
-		if (!IsStructure(row)) {
-			return ColumnsBuilder.Member(ColumnsBuilder.Of(row, index), name);
+		MemberOf(path, row, pos);
+		final parameter = CallbackName(index);
+		if (parameter == null) {
+			return InlineColumn(row, index, path, pos);
 		}
+		var reached = macro $i{parameter};
+		for (step in path) {
+			reached = {expr: EField(reached, step), pos: pos};
+		}
+		return reached;
+	}
+
+	/** The column at `path`, built on the parameter's position, named as its columns are named. */
+	static function InlineColumn(row:Type, index:Int, path:Array<String>, pos:Position):Expr {
+		final column = ColumnPathOf(row, path, pos);
+		final name = column.name;
+		final type = column.type;
 		return macro new codequery.sqlexpressions.ColumnSqlExpression(
-			codequery.sqlexpressions.ParameterSqlSource.At($v{index}), $v{name});
+			codequery.sqlexpressions.ParameterSqlSource.At($v{index}), $v{name}, $type);
+	}
+
+	/**
+		The name of the column at `path` and what it holds. An entity's field contributes its
+		`@columnName`; a structure's, the field's own name — the same rule the columns handed to a
+		callback follow, so the two shapes agree on every name.
+	**/
+	static function ColumnPathOf(row:Type, path:Array<String>, pos:Position):{name:String, type:Expr} {
+		var held = row;
+		final segments:Array<String> = [];
+		var type:Expr = macro codequery.sqlexpressions.SqlType.SqlUnknown;
+		for (step in path) {
+			final field = FieldNamed(held, step);
+			if (field == null) {
+				Context.error('${held.toString()} has no field "$step"', pos);
+			}
+			segments.push(IsStructure(held) ? field.name : ColumnsBuilder.ColumnNameOf(field));
+			type = ColumnsBuilder.SqlTypeOfField(field);
+			held = field.type;
+		}
+		return {name: segments.join(ColumnsBuilder.Separator), type: type};
 	}
 
 	/** Whether a row is an anonymous structure — what a projection answers with. */
@@ -1012,7 +1172,7 @@ class ExpressionConverter {
 		A lambda naming a row rather than building a structure — `(a, b) -> b`, which is what
 		`Reduce` is for — selects that row's columns and keeps its type.
 	**/
-	public static function ConvertProjection(projection:Expr, rows:Array<Type>, ?query:Expr):{selection:Expr, row:Type} {
+	public static function ConvertProjection(projection:Expr, rows:Array<Type>, ?query:Expr, asCallback:Bool = false):{selection:Expr, row:Type} {
 		final projection = ResolveLambda(projection);
 		final fn = switch projection.expr {
 			case EFunction(_, f): f;
@@ -1039,12 +1199,18 @@ class ExpressionConverter {
 		// An aggregate over a window the query named reaches the window through the query.
 		final enclosing = WindowConverter.CurrentQuery;
 		WindowConverter.CurrentQuery = query;
-		final selection = try ToProjection(body, bound, rows) catch (failed:Dynamic) {
+		final names = [for (arg in fn.args) arg.name];
+		final selection = try Converting(asCallback ? names : null, () -> ToProjection(body, bound, rows)) catch (failed:Dynamic) {
 			WindowConverter.CurrentQuery = enclosing;
 			throw failed;
 		}
 		WindowConverter.CurrentQuery = enclosing;
-		return {selection: selection, row: row};
+		return {selection: asCallback ? Callback(names, rows, selection, projection.pos) : selection, row: row};
+	}
+
+	/** The projection as a callback over the rows' columns, which is what `select` is handed. */
+	public static function ConvertProjectionCallback(projection:Expr, rows:Array<Type>):{selection:Expr, row:Type} {
+		return ConvertProjection(projection, rows, null, true);
 	}
 
 	/**
@@ -1103,7 +1269,7 @@ class ExpressionConverter {
 			case _: [{field: "", expr: Unwrap(fn.expr)}];
 		}
 
-		final built = {
+		final built = Converting(null, () -> {
 			expr: EArrayDecl([
 				for (field in members) {
 					final value = ToAggregate(field.expr, fn.args[0].name, named, entities, query);
@@ -1111,7 +1277,7 @@ class ExpressionConverter {
 				}
 			]),
 			pos: projection.pos
-		};
+		});
 
 		return {
 			selection: macro new codequery.sqlexpressions.ProjectionSqlExpression($built),
@@ -1330,6 +1496,11 @@ class ExpressionConverter {
 		return macro(${converted} : codequery.sqlexpressions.ColumnSqlExpression);
 	}
 
+	/** The same, as a callback over the row's columns answering with the column. */
+	public static function ConvertColumnCallback(selector:Expr, rows:Array<Type>):Expr {
+		return ConvertLambda(selector, rows, macro :Dynamic, "a column selector, e.g. g -> g.email", true);
+	}
+
 	/**
 		What a `Set` is assigning: a lambda is an expression over the row, and anything else is a
 		value to be read where it stands.
@@ -1337,6 +1508,14 @@ class ExpressionConverter {
 	public static function ConvertValue(value:Expr, rows:Array<Type>):Expr {
 		return switch value.expr {
 			case EFunction(_, _): ConvertKey(value, rows);
+			case _: Valued(value);
+		}
+	}
+
+	/** The same, a lambda becoming a callback over the rows' columns and a value the constant it is. */
+	public static function ConvertValueCallback(value:Expr, rows:Array<Type>):Expr {
+		return switch value.expr {
+			case EFunction(_, _): ConvertKeyCallback(value, rows);
 			case _: Valued(value);
 		}
 	}
@@ -1414,8 +1593,8 @@ class ExpressionConverter {
 	/** `UPDATE … FROM` and `DELETE … USING`, which reach a second row. */
 	public static function MutationFrom(table:Expr, source:Expr, begins:String, answers:String):Expr {
 		final rows = [EntityOf(table), EntityOf(source)];
-		final statement = macro(cast $source : codequery.queries.SelectQueryImpl).ToExpression();
-		final begun = macro $p{["codequery", "queries", "MutationQueryImpl", begins]}($table.Table, $statement);
+		final statement = macro(cast $source : codequery.queries.SelectQueryImpl);
+		final begun = macro $p{["codequery", "queries", "MutationQueryImpl", begins]}($table.Table, $statement, $table.Shape);
 
 		final queryType = TPath({
 			pack: ["codequery", "queries"],
@@ -1527,7 +1706,7 @@ class ExpressionConverter {
 		final joined = if (Omitted(on)) {
 			IsTable(source) ? macro $query.JoinTable($kind, $source) : macro $query.JoinQuery($kind, $inner);
 		} else {
-			final condition = Convert(on, rows);
+			final condition = ConvertCallback(on, rows);
 			IsTable(source)
 				? macro $query.JoinTable($kind, $source, $condition)
 				: macro $query.JoinQuery($kind, $inner, $condition);
@@ -1602,11 +1781,18 @@ class ExpressionConverter {
 		for (index => arg in fn.args) {
 			bound.set(arg.name, index == fn.args.length - 1 ? rows.length - 1 : RowOfType(rows, parameters[index], relation.pos));
 		}
-		final condition = ToSqlExpression(fn.expr, bound, rows);
+		// The callback takes every row the query has, under the relationship's names where it
+		// names them and unused names where it does not.
+		final names = [for (index in 0...rows.length) '_row$index'];
+		for (name => index in bound) {
+			names[index] = name;
+		}
+		final condition = Callback(names, rows, Converting(names, () -> ToSqlExpression(fn.expr, bound, rows)), relation.pos);
 
 		final tableType = target.toComplexType();
 		final tableName = ColumnsBuilder.TableNameOfType(target);
-		final table = macro new codequery.DbTable<$tableType>(new codequery.QualifiedTableName($v{tableName}));
+		final shape = ShapeOf(target);
+		final table = macro new codequery.DbTable<$tableType>(new codequery.QualifiedTableName($v{tableName}), null, null, null, $shape);
 		final kind = macro $p{["codequery", "sqlexpressions", "JoinType", joinType]};
 		final query = macro(cast $self : codequery.queries.SelectQueryImpl);
 		return Answering(macro $query.JoinTable($kind, $table, $condition), rows);
@@ -1636,7 +1822,8 @@ class ExpressionConverter {
 			expr: EFunction(FAnonymous, {args: [{name: fn.args[0].name, type: queryType}], ret: null, expr: fn.expr}),
 			pos: member.pos
 		};
-		final selfReference = macro(cast codequery.queries.SelectQueryImpl.OverTable(new codequery.QualifiedTableName($name)) : $queryType);
+		final shape = ShapeOf(rows[0]);
+		final selfReference = macro(cast codequery.queries.SelectQueryImpl.OverTable(new codequery.QualifiedTableName($name), null, $shape) : $queryType);
 		return macro(cast ($typed)($selfReference) : codequery.queries.SelectQueryImpl);
 	}
 
@@ -1660,6 +1847,25 @@ class ExpressionConverter {
 		}
 		final selection = ConvertProjection(set, rows).selection;
 		return macro codequery.sqlexpressions.ProjectionKeys.Of($selection);
+	}
+
+	/**
+		The same grouping set as a callback over the rows' columns, answering with one key, a
+		structure of several, or nothing at all for the grand total.
+	**/
+	public static function ConvertKeySetCallback(set:Expr, rows:Array<Type>):Expr {
+		final fn = switch set.expr {
+			case EFunction(_, f): f;
+			case _: Context.error("Expected a grouping set, e.g. r -> r.unitId", set.pos);
+		}
+		final body = Unwrap(fn.expr);
+		if (body.expr.match(EBlock([]))) {
+			return Callback([for (arg in fn.args) arg.name], rows, macro [], set.pos);
+		}
+		if (!body.expr.match(EObjectDecl(_))) {
+			return ConvertKeyCallback(set, rows);
+		}
+		return ConvertProjectionCallback(set, rows).selection;
 	}
 
 	/** `UNION`, `INTERSECT` and `EXCEPT`, which put two statements' rows together. */
@@ -1863,6 +2069,8 @@ class ExpressionConverter {
 		}
 		final reached = PathOf(target, bound);
 		final object = reached.path.join(".");
+		final columnNames = [fn.args[0].name];
+		final valueNames = [for (arg in assigned.args) arg.name];
 
 		return [
 			for (leaf in leaves) {
@@ -1872,8 +2080,10 @@ class ExpressionConverter {
 						value.pos);
 				}
 				{
-					column: ColumnFor(rows[reached.row], reached.row, reached.path.concat(leaf), target.pos),
-					value: ToSqlExpression(given, assignedBound, rows)
+					column: Callback(columnNames, [rows[0]],
+						Converting(columnNames, () -> ColumnFor(rows[reached.row], reached.row, reached.path.concat(leaf), target.pos)), target.pos),
+					value: Callback(valueNames, rows,
+						Converting(valueNames, () -> ToSqlExpression(given, assignedBound, rows)), value.pos)
 				}
 			}
 		];

@@ -21,8 +21,8 @@ class SelectQueryExtensions {
 	/** `WHERE <predicate>`. Called again, it adds another condition with AND. */
 	public static macro function Where(self:Expr, predicate:Expr):Expr {
 		final rows = ExpressionConverter.EntitiesOf(self);
-		final condition = ExpressionConverter.Convert(predicate, rows);
-		return ExpressionConverter.Answering(macro ${Impl(self)}.WhereCondition($condition), rows);
+		final condition = ExpressionConverter.ConvertCallback(predicate, rows);
+		return ExpressionConverter.Answering(macro ${Impl(self)}.Where($condition), rows);
 	}
 
 	/**
@@ -35,8 +35,8 @@ class SelectQueryExtensions {
 		if (ExpressionConverter.Omitted(on)) {
 			return ExpressionConverter.Answering(macro ${Impl(self)}.DistinctRows(), rows);
 		}
-		final key = ExpressionConverter.ConvertKey(on, rows);
-		return ExpressionConverter.Answering(macro ${Impl(self)}.DistinctOnKey($key), rows);
+		final key = ExpressionConverter.ConvertKeyCallback(on, rows);
+		return ExpressionConverter.Answering(macro ${Impl(self)}.DistinctOn($key), rows);
 	}
 
 	/** `ORDER BY key ASC`, optionally `NULLS FIRST|LAST`. Called again, it adds another term. */
@@ -302,7 +302,7 @@ class SelectQueryExtensions {
 		final rows = ExpressionConverter.EntitiesOf(self);
 		var query = Impl(self);
 		for (set in sets) {
-			final keys = ExpressionConverter.ConvertKeySet(set, rows);
+			final keys = ExpressionConverter.ConvertKeySetCallback(set, rows);
 			query = macro $query.GroupBySet($keys);
 		}
 		return ExpressionConverter.Answering(query, rows);
@@ -354,8 +354,8 @@ class SelectQueryExtensions {
 	**/
 	public static macro function GroupBy(self:Expr, keySelector:Expr):Expr {
 		final rows = ExpressionConverter.EntitiesOf(self);
-		final keys = ExpressionConverter.ConvertKeySet(keySelector, rows);
-		return ExpressionConverter.Answering(macro ${Impl(self)}.GroupByKeys($keys), rows);
+		final keys = ExpressionConverter.ConvertKeySetCallback(keySelector, rows);
+		return ExpressionConverter.Answering(macro ${Impl(self)}.GroupBy($keys), rows);
 	}
 
 	/**
@@ -467,20 +467,20 @@ class SelectQueryExtensions {
 	#if macro
 	static function Ordered(self:Expr, keySelector:Expr, nulls:Null<Expr>, ascending:Bool):Expr {
 		final rows = ExpressionConverter.EntitiesOf(self);
-		final key = ExpressionConverter.ConvertKey(keySelector, rows);
+		final key = ExpressionConverter.ConvertKeyCallback(keySelector, rows);
 
 		// An ordering the call site did not ask for is left off rather than passed as its default.
 		final ordered = ExpressionConverter.Omitted(nulls)
-			? macro ${Impl(self)}.OrderByKey($key, $v{ascending})
-			: macro ${Impl(self)}.OrderByKey($key, $v{ascending}, $nulls);
+			? macro ${Impl(self)}.OrderBy($key, $v{ascending})
+			: macro ${Impl(self)}.OrderBy($key, $v{ascending}, $nulls);
 		return ExpressionConverter.Answering(ordered, rows);
 	}
 
 	static function Grouped(self:Expr, keySelector:Expr, mode:String):Expr {
 		final rows = ExpressionConverter.EntitiesOf(self);
-		final keys = ExpressionConverter.ConvertKeySet(keySelector, rows);
+		final keys = ExpressionConverter.ConvertKeySetCallback(keySelector, rows);
 		final grouping = macro $p{["codequery", "sqlexpressions", "GroupingMode", mode]};
-		return ExpressionConverter.Answering(macro ${Impl(self)}.GroupByKeys($keys, $grouping), rows);
+		return ExpressionConverter.Answering(macro ${Impl(self)}.GroupBy($keys, $grouping), rows);
 	}
 
 	static function Existing(self:Expr, table:Expr, correlation:Expr, negate:Bool):Expr {
@@ -492,15 +492,12 @@ class SelectQueryExtensions {
 	}
 
 	static function Projected(self:Expr, projection:Expr):Expr {
-		// The query is held once, so an aggregate reading over a window the query named reaches
-		// the window on the statement being projected rather than one built again.
-		final projected = ExpressionConverter.ConvertProjection(projection, ExpressionConverter.EntitiesOf(self), macro __query);
+		// A callback over the rows' columns, answering with the shape as it was written; a window
+		// the query named arrives as one of its parameters.
+		final projected = ExpressionConverter.ConvertProjectionCallback(projection, ExpressionConverter.EntitiesOf(self));
 		final selection = projected.selection;
 		// A projection collapses however many rows the query had to the one shape it answers with.
-		return ExpressionConverter.Answering(macro {
-			final __query = ${Impl(self)};
-			__query.SelectProjection($selection);
-		}, [projected.row]);
+		return ExpressionConverter.Answering(macro ${Impl(self)}.Select($selection), [projected.row]);
 	}
 
 	/** The statement underneath, which is where a clause is actually added. */

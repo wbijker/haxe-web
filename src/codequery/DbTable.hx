@@ -35,6 +35,13 @@ class DbTable<T> implements IQuery<T> implements IDbTableMember {
 	/** The entity's class path, which is how a schema finds this table's definition. */
 	public var EntityName(default, null):Null<String>;
 
+	/**
+		How a lambda over this table is handed its row's columns, and how a fetched row becomes an
+		entity. Comes from the entity's generated columns type, which `of()` and `Query.table` know
+		and a table constructed by hand does not.
+	**/
+	public var Shape(default, null):RowShape;
+
 	/** What the member says about its table beyond what the entity's own metadata can. */
 	final configure:Null<codequery.migrations.EntityTableBuilder<T>->Void>;
 
@@ -45,11 +52,12 @@ class DbTable<T> implements IQuery<T> implements IDbTableMember {
 	var owner:Null<{}>;
 
 	public function new(table:QualifiedTableName, ?entity:String, ?configure:codequery.migrations.EntityTableBuilder<T>->Void,
-			?owner:IDbSchema) {
+			?owner:IDbSchema, ?shape:RowShape) {
 		this.Table = table;
 		this.EntityName = entity;
 		this.configure = configure;
 		this.owner = owner;
+		this.Shape = shape != null ? shape : RowShape.Unshaped('the table ${table.Name}');
 	}
 
 	/** What `DatabaseInitializer.Build` does to each table of the schema it builds. */
@@ -96,17 +104,17 @@ class DbTable<T> implements IQuery<T> implements IDbTableMember {
 	}
 
 	public function From():ISelectQuery<T> {
-		return cast SelectQueryImpl.OverTable(Table, Configuration);
+		return cast SelectQueryImpl.OverTable(Table, Configuration, Shape);
 	}
 
 	/** Begins an UPDATE of this table's rows. */
 	public function Update():IUpdateQuery<T> {
-		return cast MutationQueryImpl.Updating(Table, Configuration);
+		return cast MutationQueryImpl.Updating(Table, Configuration, Shape);
 	}
 
 	/** Begins a DELETE from this table. */
 	public function Delete():IDeleteQuery<T> {
-		return cast MutationQueryImpl.Deleting(Table, Configuration);
+		return cast MutationQueryImpl.Deleting(Table, Configuration, Shape);
 	}
 
 	/**
@@ -218,7 +226,8 @@ class DbTable<T> implements IQuery<T> implements IDbTableMember {
 			? macro null
 			: macro($configure : codequery.migrations.EntityTableBuilder<$path> -> Void);
 		final declaredOn = owner == null ? macro null : owner;
-		return macro new codequery.DbTable<$path>(new codequery.QualifiedTableName($v{name}), $v{key}, $setup, $declaredOn);
+		final shape = ExpressionConverter.ShapeOf(entity);
+		return macro new codequery.DbTable<$path>(new codequery.QualifiedTableName($v{name}), $v{key}, $setup, $declaredOn, $shape);
 	}
 
 	/** The table an entity maps to, for a table class to hand its base: `super(DbTable.tableOf(Part))`. */

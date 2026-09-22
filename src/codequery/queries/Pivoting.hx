@@ -30,7 +30,7 @@ class PivotColumn {
 **/
 class Pivoting {
 	public static function Apply(query:SelectQueryImpl, forColumn:ISqlExpression, value:ISqlExpression,
-			aggregate:AggregateType, pivots:Array<PivotColumn>, ?groupBy:ISqlExpression):SelectQueryImpl {
+			aggregate:AggregateType, pivots:Array<PivotColumn>, ?groupBy:ISqlExpression, ?shape:codequery.RowShape):SelectQueryImpl {
 		final expression = query.SelectExpression.Fork();
 
 		final members:Array<ProjectionMember> = [];
@@ -49,7 +49,9 @@ class Pivoting {
 		expression.Selection = new ProjectionSqlExpression(members);
 
 		final context = new SourceContext();
-		return new SelectQueryImpl(new SelectExpression(context.AddQuerySource(expression)), context);
+		// The row answered with is the result type the pivot was asked for, where it was named.
+		final row = shape != null ? shape : codequery.RowShape.OfSelection(expression.Selection, query.Rows);
+		return new SelectQueryImpl(new SelectExpression(context.AddQuerySource(expression)), context, [row]);
 	}
 
 	static function AsMembers(expression:ISqlExpression):Array<ProjectionMember> {

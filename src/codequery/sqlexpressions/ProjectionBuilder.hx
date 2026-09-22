@@ -19,8 +19,11 @@ using haxe.macro.TypeTools;
 	the tree is flattened here: every leaf becomes a column named along the path that reaches it —
 	`unit_id`, `data_col` — and keeps that path, which is what lets a later clause name a leaf again.
 
-	C# does this at runtime over an expression tree; here it happens while compiling, over syntax,
-	and a whole row is spread over its columns by reading the entity's fields.
+	C# does this at runtime over an expression tree. Here, for a `Select` compiled to a callback,
+	the tree is emitted as it was written with each leaf converted — `{price: b.price.zar, unit: u}`
+	— and `RowProjection` flattens what the callback answers with when the query runs, spreading a
+	whole row over the columns it hands out. Converted inline — an aggregate's selector, a subquery
+	— the flattening happens here, over syntax, by reading the entity's fields.
 **/
 class ProjectionBuilder {
 	/** `new Date(…)` makes a value, not a row of members: it converts as an expression. */
@@ -39,6 +42,9 @@ class ProjectionBuilder {
 	**/
 	public static function Build(body:Expr, bound:Map<String, Int>, rows:Array<Type>):Expr {
 		final e = ExpressionConverter.Unwrap(body);
+		if (ExpressionConverter.callback != null) {
+			return Tree(e, bound, rows);
+		}
 		switch e.expr {
 			// A structure names each member; the names are what the columns come back as.
 			case EObjectDecl(_) | ENew(_, _) if (!BuildsAValue(e)):
@@ -51,10 +57,8 @@ class ProjectionBuilder {
 			// A row on its own selects that row's columns.
 			case EConst(CIdent(name)) if (bound.exists(name)):
 				final index = bound[name];
-				final source = ExpressionConverter.IsStructure(rows[index])
-					? macro codequery.sqlexpressions.ParameterSqlSource.At($v{index})
-					: ColumnsBuilder.Member(ColumnsBuilder.Of(rows[index], index), "Source");
-				return macro new codequery.sqlexpressions.AllColumnsSqlExpression($source);
+				return macro new codequery.sqlexpressions.AllColumnsSqlExpression(
+					codequery.sqlexpressions.ParameterSqlSource.At($v{index}));
 
 			// A row reached through another — `f -> f.u` — is that row and nothing else, so its
 			// columns keep their own names.
@@ -77,6 +81,114 @@ class ProjectionBuilder {
 	static function Projection(members:Array<Expr>, pos:Position):Expr {
 		final list = {expr: EArrayDecl(members), pos: pos};
 		return macro new codequery.sqlexpressions.ProjectionSqlExpression($list);
+	}
+
+	// ---- the callback's answer: the tree as written ---------------------------------------------------
+
+	/**
+		What a callback answers with: a structure as it was written, each value converted; a row
+		named whole as the columns the callback was handed, which the query reads as all of them; a
+		lone expression as itself. `RowProjection` flattens it when the query runs.
+	**/
+	static function Tree(e:Expr, bound:Map<String, Int>, rows:Array<Type>):Expr {
+		switch e.expr {
+			case EObjectDecl(_) | ENew(_, _) if (!BuildsAValue(e)):
+				return Literal(e, bound, rows);
+			case ECast({expr: EObjectDecl(_) | EParenthesis({expr: EObjectDecl(_)})}, type) if (type != null):
+				return Literal(e, bound, rows);
+
+			// A row on its own. An entity's is the columns handed in, and the query selects all of
+			// them; a row a projection built is one already, so its columns are named by position.
+			case EConst(CIdent(name)) if (bound.exists(name)):
+				final index = bound[name];
+				if (ExpressionConverter.IsStructure(rows[index])) {
+					return macro new codequery.sqlexpressions.AllColumnsSqlExpression(
+						codequery.sqlexpressions.ParameterSqlSource.At($v{index}));
+				}
+				return macro $i{ExpressionConverter.CallbackName(index)};
+
+			// A row reached through another — `f -> f.u` — is that row and nothing else.
+			case EField(_, _, _):
+				final reached = ExpressionConverter.PathOf(e, bound);
+				if (reached != null) {
+					final held = ExpressionConverter.MemberTypeOf(reached.path, rows[reached.row], e.pos);
+					if (IsObject(held)) {
+						return ExpressionConverter.ColumnFor(rows[reached.row], reached.row, reached.path, e.pos);
+					}
+				}
+
+			case _:
+		}
+		return ExpressionConverter.ToSqlExpression(e, bound, rows);
+	}
+
+	/** A structure written out, as a structure of converted values; nested ones stay nested. */
+	static function Literal(e:Expr, bound:Map<String, Int>, rows:Array<Type>):Expr {
+		final e = ExpressionConverter.Unwrap(e);
+		final fields:Array<ObjectField> = [];
+		switch e.expr {
+			case EObjectDecl(members):
+				for (member in members) {
+					fields.push({field: member.field, expr: Value(member.expr, bound, rows)});
+				}
+
+			// Built as a row type of its own, so the members are named as that type names its columns.
+			case ECast(inner, type) if (type != null):
+				final members = switch ExpressionConverter.Unwrap(inner).expr {
+					case EObjectDecl(members): members;
+					case _: return Value(inner, bound, rows);
+				}
+				final names = ColumnNamesOf(Context.resolveType(type, e.pos), e.pos);
+				for (member in members) {
+					final named = names.exists(member.field) ? names[member.field] : member.field;
+					fields.push({field: named, expr: Value(member.expr, bound, rows)});
+				}
+
+			// A constructor call: its arguments are the members, named as the constructor names them.
+			case ENew(typePath, args):
+				final names = ConstructorArguments(typePath, e.pos);
+				for (index => arg in args) {
+					fields.push({field: index < names.length ? names[index] : 'arg$index', expr: Value(arg, bound, rows)});
+				}
+
+			case _:
+				return Value(e, bound, rows);
+		}
+		final literal = {expr: EObjectDecl(fields), pos: e.pos};
+		// A result set is ordered as the structure was written. PHP keeps an object's fields in that
+		// order; eval orders them by name, so there the order is written on the structure.
+		if (!Context.defined("eval")) {
+			return literal;
+		}
+		final names = {expr: EArrayDecl([for (field in fields) macro $v{field.field}]), pos: e.pos};
+		return macro codequery.sqlexpressions.RowProjection.Ordered($names, $literal);
+	}
+
+	/**
+		One value of a structure: a structure within it stays one; a whole row, or an object reached
+		through one, is the columns the callback was handed, which the query spreads out; anything
+		else is the one expression it looks like.
+	**/
+	static function Value(value:Expr, bound:Map<String, Int>, rows:Array<Type>):Expr {
+		final e = ExpressionConverter.Unwrap(value);
+		switch e.expr {
+			case EObjectDecl(_) | ENew(_, _) if (!BuildsAValue(e)):
+				return Literal(e, bound, rows);
+			case ECast(_, type) if (type != null):
+				return Literal(e, bound, rows);
+			case EConst(CIdent(name)) if (bound.exists(name)):
+				return macro $i{ExpressionConverter.CallbackName(bound[name])};
+			case EField(_, _, _):
+				final reached = ExpressionConverter.PathOf(e, bound);
+				if (reached != null) {
+					final held = ExpressionConverter.MemberTypeOf(reached.path, rows[reached.row], e.pos);
+					if (IsObject(held)) {
+						return ExpressionConverter.ColumnFor(rows[reached.row], reached.row, reached.path, e.pos);
+					}
+				}
+			case _:
+		}
+		return ExpressionConverter.ToSqlExpression(e, bound, rows);
 	}
 
 	/**
@@ -179,8 +291,8 @@ class ProjectionBuilder {
 		The columns a row type spreads over, however deep its objects go: the fields to walk to reach
 		each, and the names — an entity's column names, a structure's field names — that name it.
 	**/
-	static function Leaves(type:Type, fields:Array<String>, names:Array<String>):Array<{fields:Array<String>, names:Array<String>}> {
-		final leaves = [];
+	public static function Leaves(type:Type, fields:Array<String>, names:Array<String>):Array<Leaf> {
+		final leaves:Array<Leaf> = [];
 		switch type.follow() {
 			case TInst(t, _):
 				for (field in t.get().fields.get()) {
@@ -194,7 +306,7 @@ class ProjectionBuilder {
 							leaves.push(leaf);
 						}
 					} else {
-						leaves.push({fields: step, names: named});
+						leaves.push({fields: step, names: named, type: field.type});
 					}
 				}
 			case TAnonymous(a):
@@ -206,7 +318,7 @@ class ProjectionBuilder {
 							leaves.push(leaf);
 						}
 					} else {
-						leaves.push({fields: step, names: named});
+						leaves.push({fields: step, names: named, type: field.type});
 					}
 				}
 			case _:
@@ -245,3 +357,8 @@ class ProjectionBuilder {
 	}
 	#end
 }
+
+#if macro
+/** One column a row type spreads over: the fields walked to reach it, the names that name it, and what it holds. */
+typedef Leaf = {fields:Array<String>, names:Array<String>, type:Type};
+#end

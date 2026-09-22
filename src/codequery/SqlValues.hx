@@ -66,7 +66,10 @@ class SqlValues {
 		final columnList = {expr: EArrayDecl(columns), pos: type.pos};
 		final cellList = {expr: EArrayDecl(cells), pos: type.pos};
 		final path = held.toComplexType();
-		return macro(cast codequery.SqlValues.Over($columnList, [for (item in ($items : Array<$path>)) $cellList])
+		final shape = scalar
+			? macro codequery.RowShape.Scalar($v{ScalarColumn}, ${ExpressionConverter.SqlTypeExprOf(held)})
+			: ExpressionConverter.ShapeOf(held);
+		return macro(cast codequery.SqlValues.Over($columnList, [for (item in ($items : Array<$path>)) $cellList], $shape)
 			: codequery.queries.ISelectQuery<$path>);
 	}
 
@@ -74,7 +77,7 @@ class SqlValues {
 	public static final ScalarColumn = "value";
 
 	/** The query over a constant table of these columns and rows; what `of` compiles down to. */
-	public static function Over(columns:Array<String>, rows:Array<Array<ISqlExpression>>):SelectQueryImpl {
+	public static function Over(columns:Array<String>, rows:Array<Array<ISqlExpression>>, ?shape:RowShape):SelectQueryImpl {
 		final context = new SourceContext();
 		final source = new ValueSqlSource(rows, columns, context.GenerateAlias());
 		context.Sources.push(source);
@@ -84,7 +87,7 @@ class SqlValues {
 		select.Selection = new ProjectionSqlExpression([
 			for (column in columns) new ProjectionMember(column, new ColumnSqlExpression(source, column))
 		]);
-		return new SelectQueryImpl(select, context);
+		return new SelectQueryImpl(select, context, [shape != null ? shape : RowShape.Unshaped("a VALUES list")]);
 	}
 
 	#if macro
